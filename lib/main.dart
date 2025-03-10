@@ -1,9 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:tmlink/core/config.dart';
+import 'package:bitsdojo_window/bitsdojo_window.dart';
+import 'package:tmlink/core/dashboard_page.dart';
+import 'package:tmlink/core/settings_page.dart';
 
 void main() {
   runApp(const TMLinkApp());
+
+  // Set up a resizable, draggable window
+  doWhenWindowReady(() {
+    appWindow.title = "TMLink";
+    appWindow.minSize = const Size(800, 500);
+    appWindow.size = const Size(1000, 600);
+    appWindow.alignment = Alignment.center;
+    appWindow.show();
+  });
 }
 
 class TMLinkApp extends StatelessWidget {
@@ -13,148 +23,201 @@ class TMLinkApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'TMLink',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+      debugShowCheckedModeBanner: false, // Remove debug banner
+      themeMode: ThemeMode.system, // Follow system theme
+      theme: ThemeData.light().copyWith(
+        primaryColor: Colors.yellowAccent,
+        scaffoldBackgroundColor: Colors.white,
+        textSelectionTheme: const TextSelectionThemeData(
+          cursorColor: Colors.black, // Makes the text cursor yellow
+          selectionColor:
+              Colors.black, // Highlight color when selecting text
+          selectionHandleColor:
+              Colors.black, // Handle color for text selection
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          focusedBorder: const OutlineInputBorder(
+            borderSide: BorderSide(
+              color: Colors.black,
+              width: 2,
+            ), // Yellow border when focused
+          ),
+          enabledBorder: const OutlineInputBorder(
+            borderSide: BorderSide(
+              color: Colors.grey,
+              width: 1,
+            ), // Default border
+          ),
+          labelStyle: const TextStyle(
+            color: Colors.black,
+          ), // Yellow label text when focused
+          focusedErrorBorder: const OutlineInputBorder(
+            borderSide: BorderSide(
+              color: Colors.redAccent,
+              width: 2,
+            ), // Red error border when focused
+          ),
+        ),
       ),
-      home: const SettingsPage(),
+      darkTheme: ThemeData.dark().copyWith(
+        primaryColor: Colors.yellowAccent,
+        scaffoldBackgroundColor: const Color(
+          0xFF1E1E1E,
+        ), // Dark mode background
+        textSelectionTheme: const TextSelectionThemeData(
+          cursorColor: Colors.white, // Makes the text cursor yellow
+          selectionColor: Colors.white, // Highlight color when selecting text
+          selectionHandleColor: Colors.white, // Handle color for text selection
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          focusedBorder: const OutlineInputBorder(
+            borderSide: BorderSide(
+              color: Colors.white,
+              width: 2,
+            ), // Yellow border when focused
+          ),
+          enabledBorder: const OutlineInputBorder(
+            borderSide: BorderSide(
+              color: Colors.grey,
+              width: 1,
+            ), // Default border
+          ),
+          labelStyle: const TextStyle(
+            color: Colors.white,
+          ), // Yellow label text when focused
+          focusedErrorBorder: const OutlineInputBorder(
+            borderSide: BorderSide(
+              color: Colors.redAccent,
+              width: 2,
+            ), // Red error border when focused
+          ),
+        ),
+      ),
+      home: const HomeScreen(),
     );
   }
 }
 
-class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
 
   @override
-  State<SettingsPage> createState() => _SettingsPageState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
-  final TextEditingController _tmIpController = TextEditingController();
-  final TextEditingController _tmApiKeyController = TextEditingController();
-  final TextEditingController _obsWsController = TextEditingController();
-  final TextEditingController _fieldSetIdController = TextEditingController();
-  int _numFields = 1;
+class _HomeScreenState extends State<HomeScreen> {
+  int _selectedIndex = 0;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadSettings();
-  }
-
-  /// Loads saved settings from persistent storage
-  Future<void> _loadSettings() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _tmIpController.text = prefs.getString('tm_ip') ?? Config.defaultTmIp;
-      _tmApiKeyController.text = prefs.getString('tm_api_key') ?? '';
-      _obsWsController.text =
-          prefs.getString('obs_ws_url') ?? Config.defaultObsWsUrl;
-      _fieldSetIdController.text = prefs.getString('field_set_id') ?? Config.defaultFieldSetId;
-      _numFields = prefs.getInt('num_fields') ?? Config.defaultFieldNumber;
-    });
-  }
-
-  /// Saves settings persistently
-  Future<void> _saveSettings() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString('tm_ip', _tmIpController.text.trim());
-    await prefs.setString('tm_api_key', _tmApiKeyController.text.trim());
-    await prefs.setString('obs_ws_url', _obsWsController.text.trim());
-    await prefs.setString('field_set_id', _fieldSetIdController.text.trim());
-    await prefs.setInt('num_fields', _numFields);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Settings saved successfully!")),
-    );
-  }
+  final List<Widget> _pages = [
+    const DashboardPage(),
+    const SettingsPage(),
+  ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("TMLink - Settings"),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              "Connection Settings",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      body: Row(
+        children: [
+          _buildSidebar(context), // Sidebar navigation
+          Expanded(
+            child: Column(
+              children: [
+                Expanded(child: _pages[_selectedIndex]),
+              ],
             ),
-            const SizedBox(height: 10),
-
-            // TM Server IP
-            _buildTextField(_tmIpController, "TM Server IP"),
-            const SizedBox(height: 10),
-
-            // TM API Key
-            _buildTextField(
-              _tmApiKeyController,
-              "TM API Key",
-              isPassword: true,
-            ),
-            const SizedBox(height: 10),
-
-            // OBS WebSocket Address
-            _buildTextField(_obsWsController, "OBS WebSocket Address"),
-            const SizedBox(height: 10),
-
-            // Field Set ID
-            _buildTextField(_fieldSetIdController, "Field Set ID"),
-            const SizedBox(height: 10),
-
-            // Number of Fields Dropdown
-            const Text("Number of Fields:", style: TextStyle(fontSize: 16)),
-            DropdownButton<int>(
-              value: _numFields,
-              items:
-                  List.generate(10, (index) => index + 1)
-                      .map(
-                        (num) => DropdownMenuItem<int>(
-                          value: num,
-                          child: Text(num.toString()),
-                        ),
-                      )
-                      .toList(),
-              onChanged: (int? newValue) {
-                if (newValue != null) {
-                  setState(() {
-                    _numFields = newValue;
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 20),
-
-            // Save Button
-            Center(
-              child: ElevatedButton(
-                onPressed: _saveSettings,
-                child: const Text("Save Settings"),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  /// Helper function to build a text input field
-  Widget _buildTextField(
-    TextEditingController controller,
-    String label, {
-    bool isPassword = false,
-  }) {
-    return TextField(
-      controller: controller,
-      obscureText: isPassword,
-      decoration: InputDecoration(
-        labelText: label,
-        border: const OutlineInputBorder(),
+  /// Custom sidebar for navigation
+  Widget _buildSidebar(BuildContext context) {
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      width: 200,
+      color: isDarkMode ? Colors.black87 : Colors.grey[200],
+      child: Column(
+        children: [
+          const SizedBox(height: 20),
+          Text(
+            "TMLink",
+            style: TextStyle(
+              fontSize: 20,
+              color: isDarkMode ? Colors.white : Colors.black,
+            ),
+          ),
+          Text(
+            "by System Overload",
+            style: TextStyle(
+              fontSize: 12,
+              fontStyle: FontStyle.italic,
+              color: isDarkMode ? Colors.white : Colors.black,
+            ),
+          ),
+          Divider(color: isDarkMode ? Colors.white24 : Colors.black26),
+          _buildNavItem(Icons.dashboard, "Dashboard", 0, isDarkMode),
+          _buildNavItem(Icons.settings, "Settings", 1, isDarkMode),
+        ],
       ),
+    );
+  }
+
+  void _onNavItemTapped(int index) {
+    if (_selectedIndex == index) return; // Prevent unnecessary saves
+
+    // Call save function if the current page has one
+    if (_selectedIndex == 0) {
+      DashboardPage.saveFieldMappings(); // Save dashboard data
+    } else if (_selectedIndex == 1) {
+      SettingsPage.saveSettings(); // Save settings data
+    }
+
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
+
+  /// Sidebar navigation item
+  Widget _buildNavItem(
+    IconData icon,
+    String title,
+    int index,
+    bool isDarkMode,
+  ) {
+    return ListTile(
+      focusNode: FocusNode(skipTraversal: true),
+      leading: Stack(
+        children: [
+          // Black outline
+          Icon(
+            icon,
+            size: 25,
+            color: Colors.black, // Black outline in light mode
+          ),
+          // Actual icon (slightly smaller to create the outline effect)
+          Positioned.fill(
+            child: Align(
+              alignment: Alignment.center,
+              child: Icon(
+                icon,
+                size: 24, // Slightly smaller than the outline icon
+                color:
+                    _selectedIndex == index
+                        ? Colors.yellowAccent
+                        : (isDarkMode ? Colors.white : Colors.black),
+              ),
+            ),
+          ),
+        ],
+      ),
+      title: Text(
+        title,
+        style: TextStyle(color: isDarkMode ? Colors.white : Colors.black),
+      ),
+      selected: _selectedIndex == index,
+      onTap: () => _onNavItemTapped(index),
     );
   }
 }
