@@ -1,76 +1,107 @@
 import 'dart:convert';
-import 'dart:io';
+
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
+import 'package:tmlink/core/endpoints.dart';
 import 'package:tmlink/core/config.dart';
 
+class OAuthToken {
+  final String value;
+  final DateTime expiresAt;
+  const OAuthToken(this.value, this.expiresAt);
+  bool get isExpired => DateTime.now()
+      .toUtc()
+      .add(const Duration(seconds: 30))
+      .isAfter(expiresAt);
+}
+
 class AuthManager {
-  /// Retrieves an OAuth token using client credentials.
-  ///
-  /// Throws an [HttpException] if the request fails.
-  static Future<String> getOAuthToken() async {
-    const String url = "https://auth.vextm.dwabtech.com/oauth2/token";
-
-    final Map<String, String> data = {
-      "grant_type": "client_credentials",
-      "client_id": Config.clientId,
-      "client_secret": Config.clientSecret,
-    };
-
-    try {
-      final http.Response response = await http.post(
-        Uri.parse(url),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode(data),
+  static Future<OAuthToken> fetchToken({
+    required http.Client client,
+    required String clientId,
+    required String clientSecret,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    if (clientId.isEmpty || clientSecret.isEmpty) {
+      throw const AppException(
+        'Add your TM client ID and client secret in Connections, or launch with the VEX_TM environment variables.',
       );
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> responseBody = jsonDecode(response.body);
-        return responseBody["access_token"] ?? "";
-      } else {
-        throw HttpException(
-          "OAuth token request failed: ${response.statusCode} ${response.body}",
+    }
+    try {
+      final response = await client
+          .post(
+            Uri.parse('https://auth.vextm.dwabtech.com/oauth2/token'),
+            body: {
+              'grant_type': 'client_credentials',
+              'client_id': clientId,
+              'client_secret': clientSecret,
+            },
+          )
+          .timeout(timeout);
+      if (response.statusCode != 200) {
+        throw AppException(
+          response.statusCode == 400 || response.statusCode == 401
+              ? 'TM authorization was rejected. Check your client ID and secret.'
+              : 'TM authorization service is unavailable (HTTP ${response.statusCode}). Retry when internet access is restored.',
         );
       }
-    } on SocketException {
-      throw HttpException("Failed to connect to authentication server.");
-    } catch (e) {
-      throw HttpException("OAuth token request failed: $e");
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final token = data['access_token'];
+      if (token is! String || token.isEmpty) {
+        throw const AppException('TM authorization returned an invalid token.');
+      }
+      final seconds = int.tryParse('${data['expires_in']}') ?? 300;
+      return OAuthToken(
+        token,
+        DateTime.now().toUtc().add(Duration(seconds: seconds)),
+      );
+    } on AppException {
+      rethrow;
+    } catch (_) {
+      throw const AppException(
+        'Could not reach the TM authorization service. Check your internet connection and retry.',
+      );
     }
   }
 
-  /// Creates a string to sign for authentication.
-  ///
-  /// - [method]: HTTP method (e.g., 'GET', 'POST'). Default is 'GET'.
-  /// - [pathWithQuery]: Path with query parameters (e.g., '/api/matches?division=1').
-  /// - [token]: OAuth access token.
-  /// - [host]: Host of the request (e.g., '127.0.0.1:5000').
-  /// - [dateStr]: Timestamp in RFC 1123 format.
-  ///
-  /// Returns a formatted string to be signed.
+  static Future<String> getOAuthToken() async {
+    final client = http.Client();
+    try {
+      return (await fetchToken(
+        client: client,
+        clientId: Config.clientId,
+        clientSecret: Config.clientSecret,
+      )).value;
+    } finally {
+      client.close();
+    }
+  }
+
   static String createStringToSign({
+    required String method,
     required String pathWithQuery,
     required String token,
     required String host,
     required String dateStr,
-    String method = "GET",
+    String? apiKeyHeader,
+    bool includeApiKeyInSignature = false,
   }) {
-    return "$method\n"
-        "$pathWithQuery\n"
-        "token:$token\n"
-        "host:$host\n"
-        "x-tm-date:$dateStr\n";
+    final lines = [
+      method.toUpperCase(),
+      pathWithQuery,
+      'token:$token',
+      'host:$host',
+      'x-tm-date:$dateStr',
+      if (includeApiKeyInSignature &&
+          apiKeyHeader != null &&
+          apiKeyHeader.isNotEmpty)
+        'x-tm-api-key:$apiKeyHeader',
+    ];
+    return '${lines.join('\n')}\n';
   }
 
-  /// Generates an HMAC-SHA256 signature for a given string using the API key.
-  ///
-  /// - [apiKey]: API key for signing.
-  /// - [stringToSign]: The string to be signed.
-  ///
-  /// Returns a hex-encoded HMAC-SHA256 signature.
-  static String signString(String apiKey, String stringToSign) {
-    final hmacSha256 = Hmac(sha256, utf8.encode(apiKey));
-    final digest = hmacSha256.convert(utf8.encode(stringToSign));
-    return digest.toString();
-  }
+  static String signString(String apiKey, String stringToSign) => Hmac(
+    sha256,
+    utf8.encode(apiKey),
+  ).convert(utf8.encode(stringToSign)).toString();
 }

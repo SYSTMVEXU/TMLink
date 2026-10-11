@@ -1,223 +1,360 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:bitsdojo_window/bitsdojo_window.dart';
-import 'package:tmlink/core/dashboard_page.dart';
-import 'package:tmlink/core/settings_page.dart';
+import 'package:tmlink/core/app_controller.dart';
+import 'package:tmlink/pages/dashboard_page.dart';
+import 'package:tmlink/pages/settings_page.dart';
+import 'package:tmlink/ui/app_theme.dart';
+import 'package:tmlink/ui/components.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const TMLinkApp());
-
-  // Set up a resizable, draggable window
-  doWhenWindowReady(() {
-    appWindow.title = "TMLink";
-    appWindow.minSize = const Size(800, 500);
-    appWindow.size = const Size(1000, 600);
-    appWindow.alignment = Alignment.center;
-    appWindow.show();
-  });
 }
 
 class TMLinkApp extends StatelessWidget {
-  const TMLinkApp({super.key});
-
+  final AppController? controller;
+  const TMLinkApp({super.key, this.controller});
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'TMLink',
-      debugShowCheckedModeBanner: false, // Remove debug banner
-      themeMode: ThemeMode.system, // Follow system theme
-      theme: ThemeData.light().copyWith(
-        primaryColor: Colors.yellowAccent,
-        scaffoldBackgroundColor: Colors.white,
-        textSelectionTheme: const TextSelectionThemeData(
-          cursorColor: Colors.black, // Makes the text cursor yellow
-          selectionColor:
-              Colors.black, // Highlight color when selecting text
-          selectionHandleColor:
-              Colors.black, // Handle color for text selection
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          focusedBorder: const OutlineInputBorder(
-            borderSide: BorderSide(
-              color: Colors.black,
-              width: 2,
-            ), // Yellow border when focused
-          ),
-          enabledBorder: const OutlineInputBorder(
-            borderSide: BorderSide(
-              color: Colors.grey,
-              width: 1,
-            ), // Default border
-          ),
-          labelStyle: const TextStyle(
-            color: Colors.black,
-          ), // Yellow label text when focused
-          focusedErrorBorder: const OutlineInputBorder(
-            borderSide: BorderSide(
-              color: Colors.redAccent,
-              width: 2,
-            ), // Red error border when focused
-          ),
-        ),
-      ),
-      darkTheme: ThemeData.dark().copyWith(
-        primaryColor: Colors.yellowAccent,
-        scaffoldBackgroundColor: const Color(
-          0xFF1E1E1E,
-        ), // Dark mode background
-        textSelectionTheme: const TextSelectionThemeData(
-          cursorColor: Colors.white, // Makes the text cursor yellow
-          selectionColor: Colors.white, // Highlight color when selecting text
-          selectionHandleColor: Colors.white, // Handle color for text selection
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          focusedBorder: const OutlineInputBorder(
-            borderSide: BorderSide(
-              color: Colors.white,
-              width: 2,
-            ), // Yellow border when focused
-          ),
-          enabledBorder: const OutlineInputBorder(
-            borderSide: BorderSide(
-              color: Colors.grey,
-              width: 1,
-            ), // Default border
-          ),
-          labelStyle: const TextStyle(
-            color: Colors.white,
-          ), // Yellow label text when focused
-          focusedErrorBorder: const OutlineInputBorder(
-            borderSide: BorderSide(
-              color: Colors.redAccent,
-              width: 2,
-            ), // Red error border when focused
-          ),
-        ),
-      ),
-      home: const HomeScreen(),
-    );
-  }
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'TMLink',
+    debugShowCheckedModeBanner: false,
+    themeMode: ThemeMode.system,
+    theme: appTheme(Brightness.light),
+    darkTheme: appTheme(Brightness.dark),
+    home: HomeScreen(controller: controller),
+  );
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
-
+  final AppController? controller;
+  const HomeScreen({super.key, this.controller});
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _selectedIndex = 0;
-
-  final List<Widget> _pages = [
-    const DashboardPage(),
-    const SettingsPage(),
-  ];
+  late final AppController _app;
+  int _page = 0;
+  @override
+  void initState() {
+    super.initState();
+    _app = widget.controller ?? AppController();
+    _app.initialize();
+  }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Row(
+  void dispose() {
+    if (widget.controller == null) _app.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: _app,
+    builder: (context, _) {
+      final narrow = MediaQuery.sizeOf(context).width < 850;
+      final pages = [
+        DashboardPage(
+          controller: _app,
+          onConnections: () => setState(() => _page = 1),
+        ),
+        SettingsPage(controller: _app),
+        ActivityPage(controller: _app),
+      ];
+      return Scaffold(
+        body: Row(
+          children: [
+            if (!narrow) _sidebar(context),
+            Expanded(
+              child: Column(
+                children: [
+                  if (narrow)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            CupertinoIcons.link,
+                            color: Color(0xFF007AFF),
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'TMLink',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const Spacer(),
+                          StatusBadge(
+                            state: _app.monitoring
+                                ? ServiceState.connected
+                                : ServiceState.disconnected,
+                            label: _app.monitoring
+                                ? _app.developerMode
+                                      ? 'Simulating'
+                                      : 'Monitoring'
+                                : 'Paused',
+                          ),
+                        ],
+                      ),
+                    ),
+                  Expanded(
+                    child: _app.initialized
+                        ? IndexedStack(index: _page, children: pages)
+                        : const Center(child: CircularProgressIndicator()),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        bottomNavigationBar: narrow
+            ? NavigationBar(
+                selectedIndex: _page,
+                onDestinationSelected: (index) => setState(() => _page = index),
+                destinations: const [
+                  NavigationDestination(
+                    icon: Icon(CupertinoIcons.arrow_branch),
+                    label: 'Scene Routing',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(CupertinoIcons.link),
+                    label: 'Connections',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(CupertinoIcons.clock),
+                    label: 'Activity',
+                  ),
+                ],
+              )
+            : null,
+      );
+    },
+  );
+
+  Widget _sidebar(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 220,
+      decoration: BoxDecoration(
+        color: scheme.surface.withValues(alpha: .55),
+        border: Border(
+          right: BorderSide(
+            color: Theme.of(context).dividerColor.withValues(alpha: .35),
+          ),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 28, 16, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSidebar(context), // Sidebar navigation
-          Expanded(
-            child: Column(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
               children: [
-                Expanded(child: _pages[_selectedIndex]),
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: scheme.primary,
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: const Icon(
+                    CupertinoIcons.link,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'TMLink',
+                        style: TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -.5,
+                        ),
+                      ),
+                      Text(
+                        'Broadcast control',
+                        style: TextStyle(fontSize: 9.5),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  /// Custom sidebar for navigation
-  Widget _buildSidebar(BuildContext context) {
-    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      width: 200,
-      color: isDarkMode ? Colors.black87 : Colors.grey[200],
-      child: Column(
-        children: [
-          const SizedBox(height: 20),
-          Text(
-            "TMLink",
-            style: TextStyle(
-              fontSize: 20,
-              color: isDarkMode ? Colors.white : Colors.black,
-            ),
-          ),
-          Text(
-            "by System Overload",
-            style: TextStyle(
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-              color: isDarkMode ? Colors.white : Colors.black,
-            ),
-          ),
-          Divider(color: isDarkMode ? Colors.white24 : Colors.black26),
-          _buildNavItem(Icons.dashboard, "Dashboard", 0, isDarkMode),
-          _buildNavItem(Icons.settings, "Settings", 1, isDarkMode),
-        ],
-      ),
-    );
-  }
-
-  void _onNavItemTapped(int index) {
-    if (_selectedIndex == index) return; // Prevent unnecessary saves
-
-    // Call save function if the current page has one
-    if (_selectedIndex == 0) {
-      DashboardPage.saveFieldMappings(); // Save dashboard data
-    } else if (_selectedIndex == 1) {
-      SettingsPage.saveSettings(); // Save settings data
-    }
-
-    setState(() {
-      _selectedIndex = index;
-    });
-  }
-
-
-  /// Sidebar navigation item
-  Widget _buildNavItem(
-    IconData icon,
-    String title,
-    int index,
-    bool isDarkMode,
-  ) {
-    return ListTile(
-      focusNode: FocusNode(skipTraversal: true),
-      leading: Stack(
-        children: [
-          // Black outline
-          Icon(
-            icon,
-            size: 25,
-            color: Colors.black, // Black outline in light mode
-          ),
-          // Actual icon (slightly smaller to create the outline effect)
-          Positioned.fill(
-            child: Align(
-              alignment: Alignment.center,
-              child: Icon(
-                icon,
-                size: 24, // Slightly smaller than the outline icon
-                color:
-                    _selectedIndex == index
-                        ? Colors.yellowAccent
-                        : (isDarkMode ? Colors.white : Colors.black),
+          const SizedBox(height: 38),
+          Padding(
+            padding: const EdgeInsets.only(left: 12, bottom: 10),
+            child: Text(
+              'WORKSPACE',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 1,
+                color: scheme.onSurfaceVariant,
               ),
             ),
           ),
+          _nav(context, 0, CupertinoIcons.arrow_branch, 'Scene Routing'),
+          _nav(context, 1, CupertinoIcons.link, 'Connections'),
+          _nav(context, 2, CupertinoIcons.clock, 'Activity'),
+          const Spacer(),
+          Panel(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'SERVICES',
+                  style: TextStyle(
+                    fontSize: 10,
+                    letterSpacing: .8,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _service(
+                  _app.developerMode ? 'TM simulator' : 'Tournament Manager',
+                  _app.tmState,
+                ),
+                const SizedBox(height: 10),
+                _service('OBS Studio', _app.obsState),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          Padding(
+            padding: const EdgeInsets.only(left: 12),
+            child: Text(
+              'Made by System Overload',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(fontSize: 10),
+            ),
+          ),
         ],
       ),
-      title: Text(
-        title,
-        style: TextStyle(color: isDarkMode ? Colors.white : Colors.black),
-      ),
-      selected: _selectedIndex == index,
-      onTap: () => _onNavItemTapped(index),
     );
   }
+
+  Widget _nav(
+    BuildContext context,
+    int index,
+    IconData icon,
+    String title,
+  ) => Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Material(
+      color: _page == index
+          ? Theme.of(context).colorScheme.primary.withValues(alpha: .10)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: ListTile(
+        dense: true,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+        leading: Icon(
+          icon,
+          size: 19,
+          color: _page == index ? Theme.of(context).colorScheme.primary : null,
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: _page == index ? FontWeight.w600 : FontWeight.w400,
+            color: _page == index
+                ? Theme.of(context).colorScheme.primary
+                : null,
+          ),
+        ),
+        onTap: () => setState(() => _page = index),
+      ),
+    ),
+  );
+  Widget _service(String title, ServiceState state) => Row(
+    children: [
+      Icon(
+        CupertinoIcons.circle_fill,
+        size: 7,
+        color: switch (state) {
+          ServiceState.connected => const Color(0xFF248A3D),
+          ServiceState.failed => const Color(0xFFD14343),
+          ServiceState.connecting => const Color(0xFF007AFF),
+          ServiceState.disconnected => Colors.grey,
+        },
+      ),
+      const SizedBox(width: 8),
+      Expanded(child: Text(title, style: const TextStyle(fontSize: 11))),
+    ],
+  );
+}
+
+class ActivityPage extends StatelessWidget {
+  final AppController controller;
+  const ActivityPage({super.key, required this.controller});
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    padding: const EdgeInsets.all(32),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        PageHeading(
+          title: 'Activity',
+          subtitle:
+              'Connection checks and confirmed scene changes. The latest 100 entries stay in this session.',
+          action: OutlinedButton(
+            onPressed: controller.activity.isEmpty
+                ? null
+                : controller.clearActivity,
+            child: const Text('Clear activity'),
+          ),
+        ),
+        const SizedBox(height: 28),
+        Panel(
+          child: controller.activity.isEmpty
+              ? const EmptyState(
+                  icon: CupertinoIcons.clock,
+                  title: 'A clean slate',
+                  message: 'Connect your services to start the activity log.',
+                )
+              : Column(
+                  children: controller.activity.map((entry) {
+                    final time =
+                        '${entry.time.hour.toString().padLeft(2, '0')}:${entry.time.minute.toString().padLeft(2, '0')}:${entry.time.second.toString().padLeft(2, '0')}';
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            entry.error
+                                ? CupertinoIcons.exclamationmark_circle
+                                : CupertinoIcons.checkmark_circle,
+                            size: 18,
+                            color: entry.error
+                                ? const Color(0xFFD14343)
+                                : const Color(0xFF248A3D),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(child: SelectableText(entry.message)),
+                          const SizedBox(width: 12),
+                          Text(
+                            time,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+        ),
+      ],
+    ),
+  );
 }
