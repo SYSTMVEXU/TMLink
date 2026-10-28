@@ -194,7 +194,7 @@ def build(target):
                 "Windows: extract the entire ZIP, then open tmlink.exe. Keep its other files together.\n"
                 "Linux: extract the archive and open tmlink; a system keyring and libsecret are required.\n\n"
                 "Open Connections and enter your tournament server address, its TM API key, and OBS settings.\n"
-                "App authorization is automatic; leave Advanced authorization blank.\n"
+                "App authorization is automatic; no app client credentials need to be entered.\n"
                 "Updates: https://github.com/SYSTMVEXU/TMLink/releases/latest\n"
             )
             (staging / "START HERE.txt").write_text(instructions)

@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.0.1 — 2026-10-27
+
+Initial public release of Automated Tournament Stream (ATS).
+
+- Connect to local VEX Tournament Manager using DWAB OAuth authorization and signed API requests, and control OBS Studio through WebSocket 5.x.
+- Show the upcoming-match preview when a match is queued, then switch to its mapped field scene when the match starts.
+- Automatically refresh the team roster from TM and write `Documents/ATS/teams.csv`, including team names and organizations.
+- Manage robot images and team photos in the Documents/ATS folder, with a searchable Photos gallery and image previews.
+- Offer basic and advanced settings, with saved scene mappings and connection credentials stored in the system keychain.
+- Add optional macOS music automation: pause supported players at match start and resume the players ATS paused at match end.
+- Check/request macOS Automation permission when music automation is enabled, and provide a two-second pause/resume test independent of TM.
+- Identify DWAB HTTP 429 responses as authorization rate limits rather than internet outages.
+- Build macOS, Windows, and Linux release packages in GitHub Actions with bundled app authorization, credential-literal scans, checksums, and separately encrypted debug symbols.
+
+macOS music automation is available only on macOS. TIDAL menu control also requires Accessibility approval. Desktop packages are not publisher signed or notarized.
+
+## Pre-release development history
 
 ### TM scene trigger compatibility
 
@@ -17,7 +33,7 @@
 - Added Finder and roster refresh controls, plus setup guidance for team-number image filenames and fallback images.
 - Added a **Photos** workspace with roster and filename discovery, team search, robot/team photo filters, large previews, and visible fallback or missing-image states.
 
-Development summary through October 27, 2026. These changes have not been published as a new release; the package version remains `1.0.0+1`.
+Historical development summary through October 27, 2026, before the initial 0.0.1 release. Some intermediate setup flows described below were superseded during development.
 
 ### Bundled desktop app authorization
 

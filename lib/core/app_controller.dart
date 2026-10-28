@@ -75,6 +75,7 @@ class AppController extends ChangeNotifier {
   bool _developerMode = false;
   bool get developerMode => _developerMode;
   bool testingScene = false;
+  bool testingMusic = false;
   bool savingSettings = false;
   bool routingSaveFailed = false;
   bool _mappingReadFailed = false;
@@ -110,7 +111,11 @@ class AppController extends ChangeNotifier {
       tmState == ServiceState.connecting || obsState == ServiceState.connecting;
   bool get savingRouting => _pendingSaves > 0;
   bool get locked =>
-      monitoring || starting || savingSettings || importingAssets;
+      monitoring ||
+      starting ||
+      savingSettings ||
+      importingAssets ||
+      testingMusic;
   TmFieldSet? get selectedFieldSet {
     for (final set in fieldSets) {
       if (set.id == selectedFieldSetId) return set;
@@ -357,10 +362,15 @@ class AppController extends ChangeNotifier {
 
   Future<void> testMatchMusicAutomation() async {
     if (_disposed ||
+        locked ||
+        connecting ||
+        testingScene ||
         !settings.advancedUserMode ||
         !settings.matchMusicAutomation) {
       return;
     }
+    testingMusic = true;
+    _changed();
     List<String> paused = const [];
     try {
       paused = await _mediaControls.pausePlaying();
@@ -384,6 +394,9 @@ class AppController extends ChangeNotifier {
         }
       }
       _log('Music test failed: $error', error: true);
+    } finally {
+      testingMusic = false;
+      _changed();
     }
   }
 
@@ -882,8 +895,9 @@ class AppController extends ChangeNotifier {
     eliminationsMode = true;
     _lastElimsRefresh = null;
     await _refreshEliminations();
-    if (_disposed || !eliminationsMode || tmState != ServiceState.connected)
+    if (_disposed || !eliminationsMode || tmState != ServiceState.connected) {
       return;
+    }
     _elimsTimer?.cancel();
     _elimsTimer = Timer.periodic(
       const Duration(seconds: 5),
@@ -919,7 +933,10 @@ class AppController extends ChangeNotifier {
             if (_pausedMusicPlayers.isNotEmpty) return;
             final paused = await _mediaControls.pausePlaying();
             _pausedMusicPlayers = paused;
-            if (!settings.advancedUserMode || !settings.matchMusicAutomation) {
+            if (_disposed ||
+                (!starting && !monitoring) ||
+                !settings.advancedUserMode ||
+                !settings.matchMusicAutomation) {
               await _resumePausedMusic();
             } else if (paused.isNotEmpty) {
               _log('Paused music while the match is running.');

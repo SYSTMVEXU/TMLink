@@ -41,11 +41,14 @@ void main() {
           expect([
             '/api/fieldsets',
             '/api/matches/1',
+            '/api/teams',
           ], contains(request.uri.path));
           request.response.headers.contentType = ContentType.json;
           request.response.write(
             jsonEncode(
-              request.uri.path == '/api/matches/1'
+              request.uri.path == '/api/teams'
+                  ? {'teams': []}
+                  : request.uri.path == '/api/matches/1'
                   ? {
                       'matches': [
                         {
