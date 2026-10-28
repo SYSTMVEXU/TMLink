@@ -2,6 +2,7 @@
 *.class
 *.log
 *.pyc
+__pycache__/
 *.swp
 .DS_Store
 .atom/
@@ -35,6 +36,11 @@ migrate_working_dir/
 
 # Symbolication related
 app.*.symbols
+*.symbols
+*.pdb
+*.dSYM/
+debug-symbols.zip
+debug-symbols/
 
 # Obfuscation related
 app.*.map.json

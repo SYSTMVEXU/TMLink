@@ -2,18 +2,23 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tmlink/core/app_credentials.dart';
 import 'package:tmlink/core/config.dart';
 import 'package:tmlink/core/endpoints.dart';
+import 'package:tmlink/core/upcoming_match.dart';
 
 export 'package:tmlink/core/endpoints.dart';
 
 class AppSettings {
   final String tmHost;
   final String tmApiKey;
+  // Retained to read settings created by older versions. Authentication now
+  // comes only from the Debug environment or the official Release bundle.
   final String clientId;
   final String clientSecret;
   final String obsUrl;
   final String obsPassword;
+  final bool advancedUserMode;
   const AppSettings({
     this.tmHost = Config.defaultTmIp,
     this.tmApiKey = '',
@@ -21,20 +26,27 @@ class AppSettings {
     this.clientSecret = '',
     this.obsUrl = Config.defaultObsWsUrl,
     this.obsPassword = '',
+    this.advancedUserMode = false,
   });
 
-  String get effectiveClientId => clientId.isEmpty ? Config.clientId : clientId;
-  String get effectiveClientSecret =>
-      clientSecret.isEmpty ? Config.clientSecret : clientSecret;
+  AppCredentials resolveCredentials(AppCredentials defaults) => defaults;
+  AppCredentials get credentials => resolveCredentials(Config.credentials);
+  String get effectiveClientId => credentials.clientId;
+  String get effectiveClientSecret => credentials.clientSecret;
+
+  AppSettings copyWith({bool? advancedUserMode}) => AppSettings(
+    tmHost: tmHost,
+    tmApiKey: tmApiKey,
+    clientId: clientId,
+    clientSecret: clientSecret,
+    obsUrl: obsUrl,
+    obsPassword: obsPassword,
+    advancedUserMode: advancedUserMode ?? this.advancedUserMode,
+  );
 
   void validate() {
     normalizeTmUrl(tmHost);
     normalizeObsUrl(obsUrl);
-    if (clientId.isEmpty != clientSecret.isEmpty) {
-      throw const AppException(
-        'Enter both the TM client ID and secret, or leave both blank to use your launch environment.',
-      );
-    }
   }
 }
 
@@ -44,8 +56,11 @@ abstract class SettingsRepository {
   Future<Map<String, Map<String, String>>> loadMappings();
   Future<void> saveMappings(Map<String, Map<String, String>> mappings);
   Future<Map<String, List<String>>> loadLegacyMappings();
+  Future<void> saveAdvancedUserMode(bool enabled) async {}
   Future<Map<String, String>> loadSelection() async => {};
   Future<void> saveSelection(Map<String, String> selections) async {}
+  Future<UpcomingSettings> loadUpcoming() async => const UpcomingSettings();
+  Future<void> saveUpcoming(UpcomingSettings settings) async {}
   Future<void> resetMappings() async {
     throw const AppException('Routing reset is unavailable.');
   }
@@ -60,6 +75,32 @@ class LocalSettingsRepository extends SettingsRepository {
           const FlutterSecureStorage(
             mOptions: MacOsOptions(usesDataProtectionKeychain: false),
           );
+
+  @override
+  Future<UpcomingSettings> loadUpcoming() async {
+    try {
+      final raw = (await SharedPreferences.getInstance()).getString(
+        'upcoming_settings_v1',
+      );
+      return raw == null
+          ? const UpcomingSettings()
+          : UpcomingSettings.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
+      throw const AppException(
+        'Upcoming match settings could not be read. Restore them before monitoring.',
+      );
+    }
+  }
+
+  @override
+  Future<void> saveUpcoming(UpcomingSettings settings) async {
+    if (!await (await SharedPreferences.getInstance()).setString(
+      'upcoming_settings_v1',
+      jsonEncode(settings.toJson()),
+    )) {
+      throw const AppException('Could not save upcoming match settings.');
+    }
+  }
 
   @override
   Future<AppSettings> load() async {
@@ -85,6 +126,21 @@ class LocalSettingsRepository extends SettingsRepository {
       final values = bundle == null
           ? <String, dynamic>{}
           : jsonDecode(bundle) as Map<String, dynamic>;
+      final hadLegacyClientId = values.remove('clientId') != null;
+      final hadLegacyClientSecret = values.remove('clientSecret') != null;
+      final hadLegacyAppCredentials =
+          hadLegacyClientId || hadLegacyClientSecret;
+      if (hadLegacyAppCredentials) {
+        // Best-effort removal of the old credential override from Keychain. These
+        // values are ignored even if an older record cannot be rewritten.
+        final sanitized = jsonEncode(values);
+        try {
+          await _secure.write(
+            key: 'connection_credentials_v1',
+            value: sanitized,
+          );
+        } catch (_) {}
+      }
       return AppSettings(
         tmHost:
             values['tmHost'] as String? ??
@@ -102,8 +158,7 @@ class LocalSettingsRepository extends SettingsRepository {
             values['obsPassword'] as String? ??
             await _secure.read(key: 'obs_ws_password') ??
             '',
-        clientId: values['clientId'] as String? ?? '',
-        clientSecret: values['clientSecret'] as String? ?? '',
+        advancedUserMode: prefs.getBool('advanced_user_mode') ?? false,
       );
     } catch (_) {
       throw const AppException(
@@ -121,8 +176,6 @@ class LocalSettingsRepository extends SettingsRepository {
       'obsUrl': normalizeObsUrl(settings.obsUrl).toString(),
       'tmApiKey': settings.tmApiKey,
       'obsPassword': settings.obsPassword,
-      'clientId': settings.clientId,
-      'clientSecret': settings.clientSecret,
     });
     try {
       await _secure.write(key: 'connection_credentials_v1', value: credentials);
@@ -135,6 +188,14 @@ class LocalSettingsRepository extends SettingsRepository {
       throw const AppException(
         'Could not save settings. Check access to your system keychain and retry.',
       );
+    }
+  }
+
+  @override
+  Future<void> saveAdvancedUserMode(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!await prefs.setBool('advanced_user_mode', enabled)) {
+      throw const AppException('Could not save the user mode setting.');
     }
   }
 

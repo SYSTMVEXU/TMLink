@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tmlink/core/app_settings.dart';
+import 'package:tmlink/core/upcoming_match.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -30,6 +31,26 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
   });
+
+  test(
+    'preview scene, roster and asset copy survive a settings reload',
+    () async {
+      final repo = LocalSettingsRepository();
+      await repo.saveUpcoming(
+        const UpcomingSettings(
+          scene: 'Next Match',
+          divisionId: '2',
+          assetsDirectory: '/private/app-assets',
+          teams: {'123A': TeamInfo(name: 'Example', organization: 'School')},
+        ),
+      );
+      final loaded = await LocalSettingsRepository().loadUpcoming();
+      expect(loaded.scene, 'Next Match');
+      expect(loaded.divisionId, '2');
+      expect(loaded.teams['123A']!.organization, 'School');
+      expect(loaded.assetsDirectory, '/private/app-assets');
+    },
+  );
 
   test('URL validation supports hostnames, IPv6, TLS and explicit ports', () {
     expect(
@@ -86,7 +107,7 @@ void main() {
   });
 
   test(
-    'settings persist in one verified bundle and preserve password spaces',
+    'connection settings persist while app credentials are not saved',
     () async {
       final repo = LocalSettingsRepository();
       await repo.save(
@@ -103,10 +124,13 @@ void main() {
       expect(loaded.tmHost, 'http://host:8080');
       expect(loaded.obsUrl, 'ws://localhost:4455/');
       expect(loaded.obsPassword, ' password ');
-      expect(
-        jsonDecode(secureValues['connection_credentials_v1']!)['clientSecret'],
-        'secret',
-      );
+      final persisted =
+          jsonDecode(secureValues['connection_credentials_v1']!)
+              as Map<String, dynamic>;
+      expect(persisted.containsKey('clientId'), false);
+      expect(persisted.containsKey('clientSecret'), false);
+      expect(loaded.clientId, isEmpty);
+      expect(loaded.clientSecret, isEmpty);
       expect(
         (await SharedPreferences.getInstance()).getString('obs_ws_password'),
         null,

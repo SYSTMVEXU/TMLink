@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:tmlink/core/app_credentials.dart';
 import 'package:tmlink/core/app_settings.dart';
 import 'package:tmlink/core/auth_manager.dart';
 import 'package:web_socket_channel/io.dart';
@@ -30,7 +31,8 @@ class TmFieldSet {
     for (var i = 0; i < data.length; i++) {
       final raw = data[i];
       if (raw is! Map) continue;
-      final id = (raw['id'] ?? raw['fieldId'] ?? i).toString();
+      final id = (raw['id'] ?? raw['fieldID'] ?? raw['fieldId'] ?? i)
+          .toString();
       if (!ids.add(id)) continue;
       fields.add(
         TmField(
@@ -53,7 +55,12 @@ class TmFieldSet {
     final ids = <String>{};
     for (final raw in data) {
       if (raw is! Map) continue;
-      final id = raw['id'] ?? raw['fieldsetId'] ?? raw['fieldSetId'];
+      final id =
+          raw['id'] ??
+          raw['fieldSetID'] ??
+          raw['fieldsetID'] ??
+          raw['fieldsetId'] ??
+          raw['fieldSetId'];
       if (id == null || id.toString().isEmpty || !ids.add(id.toString())) {
         continue;
       }
@@ -82,6 +89,7 @@ class TmApiClient {
   final String fieldSetId;
   final String clientId;
   final String clientSecret;
+  final AppCredentials? appCredentials;
   final Duration timeout;
   final http.Client _http;
   final bool _ownsHttp;
@@ -99,6 +107,7 @@ class TmApiClient {
     required this.fieldSetId,
     this.clientId = '',
     this.clientSecret = '',
+    this.appCredentials,
     this.timeout = const Duration(seconds: 8),
     http.Client? httpClient,
     Future<OAuthToken> Function()? tokenProvider,
@@ -123,6 +132,11 @@ class TmApiClient {
 
   Future<void> _ensureAccessToken() async {
     _checkAlive();
+    if (_tokenProvider == null) {
+      (appCredentials ??
+              AppCredentials(clientId: clientId, clientSecret: clientSecret))
+          .validate();
+    }
     if (_token != null && !_token!.isExpired) return;
     await (_tokenLoading ??= _loadToken().whenComplete(
       () => _tokenLoading = null,
@@ -131,14 +145,17 @@ class TmApiClient {
   }
 
   Future<void> _loadToken() async {
-    _token = _tokenProvider != null
+    final token = _tokenProvider != null
         ? await _tokenProvider()
         : await AuthManager.fetchToken(
             client: _http,
-            clientId: clientId,
-            clientSecret: clientSecret,
+            clientId: appCredentials?.clientId ?? clientId,
+            clientSecret: appCredentials?.clientSecret ?? clientSecret,
+            bundled: appCredentials?.isBundled ?? false,
             timeout: timeout,
           );
+    _checkAlive();
+    _token = token;
   }
 
   Future<void> connectWebSocket() async {
@@ -327,6 +344,24 @@ class TmApiClient {
     return sets;
   }
 
+  Future<List<dynamic>> getMatches(String divisionId) async {
+    final data = await _signedGet(
+      '/api/matches/${Uri.encodeComponent(divisionId)}',
+    );
+    if (data['matches'] is! List) {
+      throw const TmApiException('TM returned an unreadable match list.');
+    }
+    return data['matches'] as List;
+  }
+
+  Future<List<dynamic>> getTeams() async {
+    final data = await _signedGet('/api/teams');
+    if (data['teams'] is! List) {
+      throw const TmApiException('TM returned an unreadable team list.');
+    }
+    return data['teams'] as List;
+  }
+
   Future<List<dynamic>> getFieldsForFieldset(String fieldsetId) async {
     if (fieldsetId.isEmpty) return [];
     final id = Uri.encodeComponent(fieldsetId);
@@ -352,7 +387,8 @@ class TmApiClient {
       final sets = data['fieldSets'] ?? data['fieldsets'];
       if (sets is List) {
         for (final set in sets.whereType<Map>()) {
-          if ('${set['id'] ?? set['fieldSetId']}' == fieldsetId &&
+          if ('${set['id'] ?? set['fieldSetID'] ?? set['fieldsetID'] ?? set['fieldSetId'] ?? set['fieldsetId']}' ==
+                  fieldsetId &&
               set['fields'] is List) {
             return set['fields'] as List;
           }
@@ -371,6 +407,7 @@ class TmApiClient {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _token = null;
     unawaited(disconnectWebSocket());
     if (_ownsHttp) _http.close();
     unawaited(_events.close());
@@ -382,8 +419,7 @@ class TmApiClient {
       baseUrl: normalizeTmUrl(settings.tmHost).toString(),
       apiKey: settings.tmApiKey,
       fieldSetId: '',
-      clientId: settings.effectiveClientId,
-      clientSecret: settings.effectiveClientSecret,
+      appCredentials: settings.credentials,
     );
   }
 }

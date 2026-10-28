@@ -6,6 +6,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tmlink/main.dart';
+import 'package:tmlink/core/app_controller.dart';
+import 'package:tmlink/core/app_credentials.dart';
 import 'package:tmlink/core/app_settings.dart';
 
 import 'test_support.dart';
@@ -183,7 +185,7 @@ void main() {
     fixture.app.dispose();
   });
 
-  testWidgets('client authorization form saves credentials and masks secrets', (
+  testWidgets('connections do not expose client credential fields', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1240, 900);
@@ -200,35 +202,105 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Connections').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Client authorization'));
-    await tester.pumpAndSettle();
-    expect(find.text('Client ID'), findsOneWidget);
-    expect(find.text('Client secret'), findsOneWidget);
+    expect(find.text('Advanced authorization'), findsNothing);
+    expect(find.text('Client ID'), findsNothing);
+    expect(find.text('Client secret'), findsNothing);
     expect(find.text('API bearer key'), findsNothing);
     final key = find.byWidgetPredicate(
       (w) => w is TextField && w.decoration?.labelText == 'TM API key',
     );
     await tester.enterText(key, ' new-server-key ');
-    final clientId = find.byWidgetPredicate(
-      (w) => w is TextField && w.decoration?.labelText == 'Client ID',
-    );
-    final clientSecret = find.byWidgetPredicate(
-      (w) => w is TextField && w.decoration?.labelText == 'Client secret',
-    );
-    await tester.ensureVisible(clientId);
-    await tester.enterText(clientId, ' new-client ');
-    await tester.ensureVisible(clientSecret);
-    await tester.enterText(clientSecret, ' new-secret ');
-    expect(tester.widget<TextField>(clientSecret).obscureText, true);
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Save settings'));
     await tester.tap(find.text('Save settings'));
     await tester.pumpAndSettle();
     expect(fixture.repository.settings.tmApiKey, 'new-server-key');
-    expect(fixture.repository.settings.clientId, 'new-client');
-    expect(fixture.repository.settings.clientSecret, ' new-secret ');
+    expect(fixture.repository.settings.clientId, isEmpty);
+    expect(fixture.repository.settings.clientSecret, isEmpty);
     expect(fixture.tmClients, isEmpty);
     await tester.pumpWidget(const SizedBox());
     fixture.app.dispose();
   });
+
+  testWidgets(
+    'bundled authorization is automatic and is never copied into saved overrides',
+    (tester) async {
+      tester.view.physicalSize = const Size(1240, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final repository = MemorySettings();
+      final app = AppController(
+        repository: repository,
+        defaultCredentials: AppCredentials(
+          clientId: 'bundled-private-id',
+          clientSecret: 'bundled-private-secret',
+          expiresAt: DateTime.utc(2099),
+          source: CredentialSource.bundled,
+        ),
+      );
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: const ValueKey('preview'),
+          child: TMLinkApp(controller: app),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Connections').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Advanced authorization'), findsNothing);
+      expect(find.text('Client ID'), findsNothing);
+      await preview(tester, 'automatic-authorization');
+      final host = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == 'Server address',
+      );
+      await tester.enterText(host, 'updated-host:8080');
+      await tester.ensureVisible(find.text('Save settings'));
+      await tester.tap(find.text('Save settings'));
+      await tester.pumpAndSettle();
+      expect(repository.settings.clientId, isEmpty);
+      expect(repository.settings.clientSecret, isEmpty);
+      expect(app.credentials.clientId, 'bundled-private-id');
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
+
+  testWidgets(
+    'expired releases show a persistent update action and explain connection failure',
+    (tester) async {
+      final app = AppController(
+        repository: MemorySettings(),
+        defaultCredentials: AppCredentials(
+          clientId: 'expired-private-id',
+          clientSecret: 'expired-private-secret',
+          expiresAt: DateTime.utc(2026),
+          source: CredentialSource.bundled,
+        ),
+        now: () => DateTime.utc(2027),
+      );
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: const ValueKey('preview'),
+          child: TMLinkApp(controller: app),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('authorization-notice')),
+        findsOneWidget,
+      );
+      expect(find.text('Download update'), findsOneWidget);
+      await preview(tester, 'expired-authorization');
+      await app.connectTm();
+      expect(app.tmState, ServiceState.failed);
+      expect(app.tmMessage, AppCredentials.updateMessage);
+      await tester.tap(find.text('Connections').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Download update'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
 }

@@ -5,12 +5,88 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:tmlink/core/app_credentials.dart';
 import 'package:tmlink/core/app_settings.dart';
 import 'package:tmlink/core/auth_manager.dart';
 import 'package:tmlink/core/tm_api_client.dart';
 import 'package:tmlink/core/tm_instance_detector.dart';
 
 void main() {
+  test('native fieldID and fieldSetID metadata preserve stable IDs', () {
+    final sets = TmFieldSet.parse([
+      {
+        'fieldSetID': 7,
+        'name': 'Competition',
+        'fields': [
+          {'fieldID': 10, 'name': 'A'},
+          {'fieldID': 20, 'name': 'B'},
+        ],
+      },
+    ]);
+    expect(sets.single.id, '7');
+    expect(sets.single.fields.map((field) => field.id), ['10', '20']);
+  });
+
+  test('expired bundled credentials fail before any network request', () async {
+    var requests = 0;
+    final tm = TmApiClient(
+      baseUrl: 'http://localhost:8080',
+      apiKey: 'local-key',
+      fieldSetId: '1',
+      appCredentials: AppCredentials(
+        clientId: 'expired-client',
+        clientSecret: 'expired-secret',
+        expiresAt: DateTime.now().toUtc().subtract(const Duration(seconds: 1)),
+        source: CredentialSource.bundled,
+      ),
+      httpClient: MockClient((_) async {
+        requests++;
+        return http.Response('{}', 200);
+      }),
+    );
+    await expectLater(
+      tm.getFieldsets(),
+      throwsA(isA<AppAuthorizationUpdateRequired>()),
+    );
+    expect(requests, 0);
+    tm.dispose();
+  });
+
+  test(
+    'revoked bundled authorization requests an update without exposing DWAB responses',
+    () async {
+      final tm = TmApiClient(
+        baseUrl: 'http://localhost:8080',
+        apiKey: 'local-key',
+        fieldSetId: '1',
+        appCredentials: AppCredentials(
+          clientId: 'bundled-client',
+          clientSecret: 'bundled-secret',
+          expiresAt: DateTime.now().toUtc().add(const Duration(days: 365)),
+          source: CredentialSource.bundled,
+        ),
+        httpClient: MockClient((request) async {
+          expect(request.url.host, 'auth.vextm.dwabtech.com');
+          return http.Response('sensitive-rejection-body', 401);
+        }),
+      );
+      await expectLater(
+        tm.getFieldsets(),
+        throwsA(
+          isA<AppAuthorizationUpdateRequired>().having(
+            (e) => e.message,
+            'safe update message',
+            allOf(
+              contains('latest ATS'),
+              isNot(contains('sensitive-rejection-body')),
+            ),
+          ),
+        ),
+      );
+      tm.dispose();
+    },
+  );
+
   Future<OAuthToken> token() async =>
       OAuthToken('test-token', DateTime.now().add(const Duration(hours: 1)));
   TmApiClient client(

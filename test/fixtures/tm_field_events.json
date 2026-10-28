@@ -1,0 +1,5 @@
+[
+  {"fieldID": 3, "type": "fieldMatchAssigned", "match": {"division": 1, "session": 1, "round": "R16", "match": 1, "instance": 1}},
+  {"fieldID": 3, "type": "fieldActivated"},
+  {"fieldID": 2, "type": "matchStarted"}
+]

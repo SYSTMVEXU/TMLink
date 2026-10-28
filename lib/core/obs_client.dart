@@ -237,6 +237,17 @@ class ObsClient {
     await _request('SetCurrentProgramScene', {'sceneName': sceneName});
   }
 
+  Future<void> setInputSettings(
+    String name,
+    Map<String, dynamic> settings,
+  ) async {
+    await _request('SetInputSettings', {
+      'inputName': name,
+      'inputSettings': settings,
+      'overlay': true,
+    });
+  }
+
   Future<List<String>> getSceneNames() async {
     final response = await _request('GetSceneList');
     final scenes = response['scenes'];

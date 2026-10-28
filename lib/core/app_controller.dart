@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:tmlink/core/app_credentials.dart';
 import 'package:tmlink/core/app_settings.dart';
+import 'package:tmlink/core/config.dart';
 import 'package:tmlink/core/obs_client.dart';
 import 'package:tmlink/core/tm_api_client.dart';
 import 'package:tmlink/core/simulated_tm_client.dart';
+import 'package:tmlink/core/team_assets_folder.dart';
+import 'package:tmlink/core/upcoming_match.dart';
 
 enum ServiceState { disconnected, connecting, connected, failed }
 
@@ -21,22 +26,20 @@ typedef ObsClientFactory = ObsClient Function(AppSettings settings);
 
 class AppController extends ChangeNotifier {
   final SettingsRepository repository;
-  final TmClientFactory _tmFactory;
+  final TmClientFactory? _tmFactory;
   final ObsClientFactory _obsFactory;
+  final AppCredentials defaultCredentials;
+  final DateTime Function() _now;
   AppController({
     SettingsRepository? repository,
     TmClientFactory? tmFactory,
     ObsClientFactory? obsFactory,
+    AppCredentials? defaultCredentials,
+    DateTime Function()? now,
   }) : repository = repository ?? LocalSettingsRepository(),
-       _tmFactory =
-           tmFactory ??
-           ((s, id) => TmApiClient(
-             baseUrl: normalizeTmUrl(s.tmHost).toString(),
-             apiKey: s.tmApiKey,
-             fieldSetId: id,
-             clientId: s.effectiveClientId,
-             clientSecret: s.effectiveClientSecret,
-           )),
+       _tmFactory = tmFactory,
+       defaultCredentials = defaultCredentials ?? Config.credentials,
+       _now = now ?? DateTime.now,
        _obsFactory =
            obsFactory ??
            ((s) => ObsClient(
@@ -45,6 +48,16 @@ class AppController extends ChangeNotifier {
            ));
 
   AppSettings settings = const AppSettings();
+  UpcomingSettings upcoming = const UpcomingSettings();
+  UpcomingMatch? queuedMatch;
+  bool importingAssets = false;
+  bool eliminationsMode = false;
+  bool get loadingMatches => _matchLoading != null;
+  final Map<String, UpcomingMatch> _matches = {};
+  Future<void>? _matchLoading;
+  int _matchLoadRevision = -1;
+  DateTime? _lastElimsRefresh;
+  Timer? _elimsTimer;
   ServiceState tmState = ServiceState.disconnected;
   ServiceState obsState = ServiceState.disconnected;
   String tmMessage = 'Connect to load your field sets.';
@@ -64,6 +77,7 @@ class AppController extends ChangeNotifier {
   bool _disposed = false;
   bool _initializing = false;
   bool _healthChecking = false;
+  bool _authorizationUpdateRequired = false;
   int _tmRevision = 0;
   int _obsRevision = 0;
   int _monitorRevision = 0;
@@ -91,7 +105,8 @@ class AppController extends ChangeNotifier {
   bool get connecting =>
       tmState == ServiceState.connecting || obsState == ServiceState.connecting;
   bool get savingRouting => _pendingSaves > 0;
-  bool get locked => monitoring || starting || savingSettings;
+  bool get locked =>
+      monitoring || starting || savingSettings || importingAssets;
   TmFieldSet? get selectedFieldSet {
     for (final set in fieldSets) {
       if (set.id == selectedFieldSetId) return set;
@@ -109,6 +124,13 @@ class AppController extends ChangeNotifier {
   int get mappedCount =>
       fields.where((f) => scenes.contains(sceneFor(f.id))).length;
   String? get readinessIssue {
+    if (!developerMode &&
+        credentials.isBundled &&
+        (!credentials.isConfigured ||
+            credentials.expiresAt == null ||
+            credentials.isExpired(_now()))) {
+      return AppCredentials.updateMessage;
+    }
     if (!storageAvailable) {
       return 'Resolve saved-settings access in Connections.';
     }
@@ -119,6 +141,9 @@ class AppController extends ChangeNotifier {
       return 'Connect Tournament Manager first.';
     }
     if (obsState != ServiceState.connected) return 'Connect OBS first.';
+    if (!scenes.contains(upcoming.scene)) {
+      return 'Choose an available Upcoming Match scene before monitoring.';
+    }
     if (fields.isEmpty) return 'Choose a field set with available fields.';
     if (_mappingReadFailed) {
       return 'Saved routing could not be read. Restore it before monitoring.';
@@ -134,8 +159,26 @@ class AppController extends ChangeNotifier {
 
   bool get canStart => !locked && !testingScene && readinessIssue == null;
 
-  TmApiClient _createTmClient(String id) =>
-      developerMode ? SimulatedTmClient(id) : _tmFactory(settings, id);
+  AppCredentials get credentials => defaultCredentials;
+  String? get authorizationNotice => developerMode
+      ? null
+      : _authorizationUpdateRequired
+      ? 'App authorization needs an update. Install the latest ATS version. If it continues, contact the app maintainer.'
+      : credentials.updateNotice(_now());
+
+  TmApiClient _createTmClient(String id) {
+    if (developerMode) return SimulatedTmClient(id);
+    // Test/custom factories own their authorization; production validates even
+    // before contacting DWAB so known expiry produces a clear update prompt.
+    if (_tmFactory != null) return _tmFactory(settings, id);
+    credentials.validate(now: _now());
+    return TmApiClient(
+      baseUrl: normalizeTmUrl(settings.tmHost).toString(),
+      apiKey: settings.tmApiKey,
+      fieldSetId: id,
+      appCredentials: credentials,
+    );
+  }
 
   Future<void> setDeveloperMode(bool enabled) async {
     if (_disposed ||
@@ -153,6 +196,9 @@ class AppController extends ChangeNotifier {
     _tm?.dispose();
     _tm = null;
     _developerMode = enabled;
+    _elimsTimer?.cancel();
+    eliminationsMode = false;
+    queuedMatch = null;
     tmState = ServiceState.disconnected;
     fieldSets = [];
     selectedFieldSetId = null;
@@ -178,6 +224,12 @@ class AppController extends ChangeNotifier {
     }
     final client = _monitorTm;
     if (client is SimulatedTmClient) client.activate(id);
+  }
+
+  void simulateMatchQueue(String id) {
+    if (_disposed || !developerMode || !monitoring) return;
+    final client = _monitorTm;
+    if (client is SimulatedTmClient) client.queueMatch(id);
   }
 
   void _changed() {
@@ -211,6 +263,20 @@ class AppController extends ChangeNotifier {
       final loaded = await repository.load();
       if (_disposed) return;
       settings = loaded;
+      upcoming = await repository.loadUpcoming();
+      try {
+        final folder = await TeamAssetsFolder.restore();
+        if (folder != null) {
+          final roster = File('$folder/teams.csv');
+          final teams = await roster.exists()
+              ? parseTeamCsv(await roster.readAsString())
+              : upcoming.teams;
+          upcoming = upcoming.copyWith(assetsDirectory: folder, teams: teams);
+          await repository.saveUpcoming(upcoming);
+        }
+      } catch (_) {
+        // Non-macOS builds and first launches have no saved folder bookmark.
+      }
       storageAvailable = true;
       _selections = await repository.loadSelection();
       try {
@@ -234,6 +300,25 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<bool> setAdvancedUserMode(bool enabled) async {
+    if (_disposed || locked || connecting || testingScene) return false;
+    savingSettings = true;
+    notice = null;
+    _changed();
+    try {
+      await repository.saveAdvancedUserMode(enabled);
+      if (_disposed) return false;
+      settings = settings.copyWith(advancedUserMode: enabled);
+      return true;
+    } catch (_) {
+      notice = 'Could not save the user mode setting.';
+      return false;
+    } finally {
+      savingSettings = false;
+      _changed();
+    }
+  }
+
   Future<bool> saveSettings(AppSettings value) async {
     if (_disposed || locked || connecting || loadingFields || testingScene) {
       return false;
@@ -247,6 +332,10 @@ class AppController extends ChangeNotifier {
       if (_disposed) return false;
       // Saved settings become authoritative only after storage confirms them.
       settings = value;
+      _matches.clear();
+      _elimsTimer?.cancel();
+      eliminationsMode = false;
+      _authorizationUpdateRequired = false;
       storageAvailable = true;
       _tmRevision++;
       _obsRevision++;
@@ -289,6 +378,10 @@ class AppController extends ChangeNotifier {
       return;
     }
     final revision = ++_tmRevision;
+    _matches.clear();
+    queuedMatch = null;
+    _elimsTimer?.cancel();
+    eliminationsMode = false;
     _tm?.dispose();
     _tm = null;
     tmState = ServiceState.connecting;
@@ -312,16 +405,22 @@ class AppController extends ChangeNotifier {
       tmState = developerMode
           ? ServiceState.disconnected
           : ServiceState.connected;
+      _authorizationUpdateRequired = false;
       tmMessage = developerMode
           ? 'TM bypassed. Three simulated fields available.'
           : '${sets.length} field set${sets.length == 1 ? '' : 's'} available';
       _log(
         developerMode ? 'TM simulator ready.' : 'Tournament Manager connected.',
       );
+      if (!developerMode) await _refreshMatches();
       if (selectedFieldSetId != null) await selectFieldSet(selectedFieldSetId!);
+      if (!developerMode) await _syncTeamRosterFromTm(client, revision);
     } catch (error) {
       client?.dispose();
       if (_disposed || revision != _tmRevision) return;
+      if (error is AppAuthorizationUpdateRequired) {
+        _authorizationUpdateRequired = true;
+      }
       _tm = null;
       tmState = ServiceState.failed;
       tmMessage = '$error';
@@ -493,6 +592,270 @@ class AppController extends ChangeNotifier {
     await _saveQueue;
   }
 
+  Future<bool> saveUpcomingSettings(UpcomingSettings value) async {
+    if (_disposed || locked || connecting || testingScene) return false;
+    if (value.scene.trim().isEmpty ||
+        int.tryParse(value.divisionId) == null ||
+        int.parse(value.divisionId) < 1) {
+      notice = 'Choose an upcoming scene and a positive TM division ID.';
+      _changed();
+      return false;
+    }
+    savingSettings = true;
+    _changed();
+    try {
+      await repository.saveUpcoming(value);
+      if (_disposed) return false;
+      final divisionChanged = upcoming.divisionId != value.divisionId;
+      upcoming = value;
+      if (divisionChanged) {
+        _matches.clear();
+        await _refreshMatches();
+      }
+      _log('Upcoming match settings saved.');
+      return true;
+    } catch (_) {
+      notice =
+          'Could not save upcoming match settings. Retry before monitoring.';
+      return false;
+    } finally {
+      savingSettings = false;
+      _changed();
+    }
+  }
+
+  Future<void> importUpcomingAssets(String directory) async {
+    if (_disposed || locked || connecting || testingScene) return;
+    importingAssets = true;
+    _changed();
+    try {
+      final imported = await importPythonAssets(Directory(directory), upcoming);
+      await repository.saveUpcoming(imported);
+      if (_disposed) return;
+      upcoming = imported;
+      _log(
+        'Imported upcoming match assets and ${upcoming.teams.length} team records.',
+      );
+    } on AppException catch (error) {
+      notice = error.message;
+    } catch (_) {
+      notice =
+          'Could not import team assets. Check folder access and the teams.csv format.';
+    } finally {
+      importingAssets = false;
+      _changed();
+    }
+  }
+
+  Future<void> chooseTeamAssetsFolder() async {
+    if (_disposed || locked || connecting || testingScene) return;
+    importingAssets = true;
+    _changed();
+    try {
+      final folder = await TeamAssetsFolder.chooseDocumentsFolder();
+      if (folder == null || _disposed) return;
+      final roster = File('$folder/teams.csv');
+      final existingTeams = await roster.exists()
+          ? parseTeamCsv(await roster.readAsString())
+          : const <String, TeamInfo>{};
+      final teams = existingTeams.isEmpty ? upcoming.teams : existingTeams;
+      final updated = upcoming.copyWith(assetsDirectory: folder, teams: teams);
+      await repository.saveUpcoming(updated);
+      if (_disposed) return;
+      upcoming = updated;
+      _log('Team asset folder ready at $folder.');
+      final client = _tm;
+      if (!developerMode &&
+          client != null &&
+          tmState == ServiceState.connected) {
+        await _syncTeamRosterFromTm(client, _tmRevision);
+      } else if (existingTeams.isEmpty && teams.isNotEmpty) {
+        final records = [
+          for (final entry in teams.entries)
+            {
+              'number': entry.key,
+              'name': entry.value.name,
+              'organization': entry.value.organization,
+            },
+        ];
+        await TeamAssetsFolder.writeRoster(folder, teamRosterCsv(records));
+      }
+    } on AppException catch (error) {
+      notice = error.message;
+    } catch (_) {
+      notice = 'Could not set up the Documents/ATS team asset folder.';
+    } finally {
+      importingAssets = false;
+      _changed();
+    }
+  }
+
+  Future<void> openTeamAssetsFolder() async {
+    try {
+      await TeamAssetsFolder.open(upcoming.assetsDirectory);
+    } catch (_) {
+      notice = 'Set up the Documents/ATS folder before opening it.';
+      _changed();
+    }
+  }
+
+  Future<void> _syncTeamRosterFromTm(TmApiClient client, int revision) async {
+    try {
+      final records = await client.getTeams();
+      if (_disposed || client != _tm || revision != _tmRevision) return;
+      final contents = teamRosterCsv(records);
+      if (upcoming.assetsDirectory.isNotEmpty) {
+        await TeamAssetsFolder.writeRoster(upcoming.assetsDirectory, contents);
+      }
+      final teams = parseTeamCsv(contents);
+      final updated = upcoming.copyWith(teams: teams);
+      await repository.saveUpcoming(updated);
+      if (_disposed || client != _tm || revision != _tmRevision) return;
+      upcoming = updated;
+      _log(
+        upcoming.assetsDirectory.isEmpty
+            ? 'Loaded ${teams.length} teams from Tournament Manager.'
+            : 'Loaded ${teams.length} teams from TM and updated teams.csv.',
+      );
+    } on AppException catch (error) {
+      if (!_disposed && client == _tm && revision == _tmRevision) {
+        _log(
+          'Could not refresh the TM team list: ${error.message}',
+          error: true,
+        );
+      }
+    } catch (_) {
+      if (!_disposed && client == _tm && revision == _tmRevision) {
+        _log(
+          'Could not save the TM team list to the asset folder.',
+          error: true,
+        );
+      }
+    }
+  }
+
+  Future<void> refreshTeamRoster() async {
+    if (_disposed || upcoming.assetsDirectory.isEmpty || locked) {
+      return;
+    }
+    try {
+      final roster = File('${upcoming.assetsDirectory}/teams.csv');
+      final teams = await roster.exists()
+          ? parseTeamCsv(await roster.readAsString())
+          : <String, TeamInfo>{};
+      final updated = upcoming.copyWith(teams: teams);
+      await repository.saveUpcoming(updated);
+      if (_disposed) return;
+      upcoming = updated;
+      notice = null;
+      _log('Loaded ${teams.length} team records from teams.csv.');
+    } on AppException catch (error) {
+      notice = error.message;
+    } catch (_) {
+      notice = 'Could not read teams.csv from the team asset folder.';
+    } finally {
+      _changed();
+    }
+  }
+
+  Future<void> refreshMatches() => _refreshMatches();
+
+  Future<void> _refreshMatches({bool eliminationsOnly = false}) async {
+    final client = _tm;
+    if (_disposed || developerMode || client == null) return;
+    final revision = _tmRevision;
+    if (_matchLoading != null && _matchLoadRevision == revision) {
+      return _matchLoading!;
+    }
+    _matchLoadRevision = revision;
+    final job = () async {
+      try {
+        final raw = await client.getMatches(upcoming.divisionId);
+        if (_disposed || revision != _tmRevision) return;
+        final loaded = <String, UpcomingMatch>{};
+        for (final item in raw) {
+          if (item is! Map<String, dynamic>) continue;
+          final info = item['matchInfo'] is Map<String, dynamic>
+              ? item['matchInfo'] as Map<String, dynamic>
+              : item;
+          final match = UpcomingMatch.fromTm(info);
+          if (eliminationsOnly && match.qualification) continue;
+          loaded['${match.qualification ? 'QUAL' : 'ELIMS'}|${match.label}'] =
+              match;
+        }
+        if (eliminationsOnly) {
+          _matches.removeWhere((key, _) => key.startsWith('ELIMS|'));
+        } else {
+          _matches.clear();
+        }
+        _matches.addAll(loaded);
+        _log('TM match list refreshed.');
+      } catch (_) {
+        if (!_disposed && revision == _tmRevision) {
+          _log(
+            'TM match list could not be refreshed. Queued-match event data will be used.',
+            error: true,
+          );
+        }
+      }
+    }();
+    _matchLoading = job;
+    _changed();
+    try {
+      await job;
+    } finally {
+      if (identical(_matchLoading, job)) _matchLoading = null;
+      _changed();
+    }
+  }
+
+  Future<void> startEliminations() async {
+    if (_disposed || developerMode || tmState != ServiceState.connected) return;
+    eliminationsMode = true;
+    _lastElimsRefresh = null;
+    await _refreshEliminations();
+    if (_disposed || !eliminationsMode || tmState != ServiceState.connected)
+      return;
+    _elimsTimer?.cancel();
+    _elimsTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => unawaited(_refreshEliminations()),
+    );
+    _changed();
+  }
+
+  Future<void> _refreshEliminations() async {
+    if (_disposed ||
+        !eliminationsMode ||
+        tmState != ServiceState.connected ||
+        loadingMatches) {
+      return;
+    }
+    final now = _now();
+    if (_lastElimsRefresh != null &&
+        now.difference(_lastElimsRefresh!) < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastElimsRefresh = now;
+    await _refreshMatches(eliminationsOnly: true);
+  }
+
+  UpcomingMatch _queuedMatchForEvent(Map<String, dynamic> event) {
+    final data = event['data'] is Map<String, dynamic>
+        ? event['data'] as Map<String, dynamic>
+        : event;
+    final raw = data['match'];
+    var match = UpcomingMatch.fromTm(
+      raw is Map<String, dynamic> ? raw : const {},
+    );
+    final cached =
+        _matches['${match.qualification ? 'QUAL' : 'ELIMS'}|${match.label}'];
+    if (cached != null && cached.teams.isNotEmpty) {
+      match = match.withTeams(cached.teams);
+    }
+    return match;
+  }
+
   Future<void> startMonitoring() async {
     if (!canStart) return;
     final revision = ++_monitorRevision;
@@ -501,10 +864,12 @@ class AppController extends ChangeNotifier {
     _changed();
     final client = _createTmClient(selectedFieldSetId!);
     _monitorTm = client;
-    String? initialField;
+    Map<String, dynamic>? initialEvent;
     var activationRevision = 0;
-    void route(String id) {
+    void route(String id, Map<String, dynamic> event) {
       final activation = ++activationRevision;
+      final assigned = event['type'] == 'fieldMatchAssigned';
+      final match = assigned ? _queuedMatchForEvent(event) : null;
       // Serialize transitions and cancel queued work on Stop/disconnect.
       _switchQueue = _switchQueue.then((_) async {
         if (_disposed ||
@@ -513,7 +878,7 @@ class AppController extends ChangeNotifier {
             activation != activationRevision) {
           return;
         }
-        final scene = sceneFor(id);
+        final scene = assigned ? upcoming.scene : sceneFor(id);
         if (scene == null || !scenes.contains(scene)) {
           await stopMonitoring(
             reason:
@@ -524,9 +889,34 @@ class AppController extends ChangeNotifier {
         try {
           await _obs!.setCurrentScene(scene);
           if (_disposed || revision != _monitorRevision) return;
-          activeFieldId = id;
+          activeFieldId = assigned ? null : id;
           currentScene = scene;
           _log('Switched OBS to “$scene”.');
+          if (match != null) {
+            queuedMatch = match;
+            final updates = await upcomingInputUpdates(match, upcoming);
+            final missing = <String>[];
+            for (final update in updates) {
+              if (_disposed ||
+                  revision != _monitorRevision ||
+                  !monitoring ||
+                  activation != activationRevision) {
+                return;
+              }
+              try {
+                await _obs!.setInputSettings(update.name, update.settings);
+              } catch (_) {
+                missing.add(update.name);
+              }
+            }
+            if (missing.isNotEmpty) {
+              _log(
+                'Upcoming preview inputs could not be updated: ${missing.join(', ')}. Check the OBS source names.',
+                error: true,
+              );
+            }
+            _changed();
+          }
         } catch (error) {
           if (revision != _monitorRevision) return;
           notice = '$error';
@@ -544,12 +934,42 @@ class AppController extends ChangeNotifier {
     _eventSubscription = client.eventStream.listen(
       (event) {
         if (revision != _monitorRevision || (!starting && !monitoring)) return;
+        if (event['type'] == 'fieldActivated') {
+          // Native TM emits this automatically when a match is queued. The
+          // Python integration intentionally waits for matchStarted to show
+          // the camera, keeping the upcoming preview visible in the meantime.
+          _log(
+            'TM field activation received; keeping the queued-match preview until match start.',
+          );
+          return;
+        }
+        if (eliminationsMode &&
+            {
+              'matchStarted',
+              'matchFinished',
+              'matchScored',
+            }.contains(event['type'])) {
+          unawaited(_refreshEliminations());
+        }
         final id = fieldIdForEvent(event, fields);
-        if (id == null) return;
+        if (id == null) {
+          if (_sceneRoutingEventTypes.contains(event['type'])) {
+            _log(
+              'Ignored TM ${event['type']}: the field is missing or is not in the selected field set.',
+            );
+          }
+          return;
+        }
+        final name = fields.firstWhere((field) => field.id == id).name;
+        _log(
+          event['type'] == 'matchStarted'
+              ? 'TM match started on $name.'
+              : 'TM queued a match on $name.',
+        );
         if (starting) {
-          initialField = id;
+          initialEvent = event;
         } else {
-          route(id);
+          route(id, event);
         }
       },
       onError: (Object error) {
@@ -564,7 +984,9 @@ class AppController extends ChangeNotifier {
       if (_disposed || revision != _monitorRevision) return;
       starting = false;
       monitoring = true;
-      if (initialField != null) route(initialField!);
+      if (initialEvent != null) {
+        route(fieldIdForEvent(initialEvent!, fields)!, initialEvent!);
+      }
       _healthTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
         if (_disposed || revision != _monitorRevision || _healthChecking) {
           return;
@@ -574,7 +996,8 @@ class AppController extends ChangeNotifier {
           final available = await _obs!.getSceneNames();
           if (_disposed || revision != _monitorRevision) return;
           scenes = available.toSet().toList()..sort();
-          if (mappedCount != fields.length) {
+          if (mappedCount != fields.length ||
+              !scenes.contains(upcoming.scene)) {
             await stopMonitoring(
               reason:
                   'OBS scenes changed. Review scene routing before restarting.',
@@ -600,6 +1023,9 @@ class AppController extends ChangeNotifier {
       );
     } catch (error) {
       if (!_disposed && revision == _monitorRevision) {
+        if (error is AppAuthorizationUpdateRequired) {
+          _authorizationUpdateRequired = true;
+        }
         notice = '$error';
         tmState = ServiceState.failed;
         tmMessage = '$error';
@@ -611,19 +1037,32 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// Field IDs and zero-based indices are distinct. Unknown events never route
-  /// to a default field, which previously caused accidental scene switches.
+  static const _sceneRoutingEventTypes = {'fieldMatchAssigned', 'matchStarted'};
+
+  /// TM's native packets use fieldID. Accept fieldId and explicit zero-based
+  /// fieldIndex adapters too, without treating an unknown ID as a position.
   static String? fieldIdForEvent(
     Map<String, dynamic> event,
     List<TmField> fields,
   ) {
-    if (event['type'] != 'fieldActivated') return null;
+    if (!_sceneRoutingEventTypes.contains(event['type'])) return null;
     final data = event['data'] is Map<String, dynamic>
         ? event['data'] as Map<String, dynamic>
         : event;
-    final id = data['fieldId']?.toString();
-    if (id != null) return fields.any((f) => f.id == id) ? id : null;
-    final index = int.tryParse('${data['fieldIndex']}');
+    final containers = [event, if (!identical(data, event)) data];
+    final explicitIds = [
+      for (final container in containers)
+        for (final key in ['fieldID', 'fieldId'])
+          if (container.containsKey(key)) container[key],
+    ];
+    if (explicitIds.isNotEmpty) {
+      if (explicitIds.any((id) => id is! int && id is! String)) return null;
+      final ids = explicitIds.map((id) => id.toString()).toSet();
+      if (ids.length != 1) return null;
+      final id = ids.single;
+      return fields.any((field) => field.id == id) ? id : null;
+    }
+    final index = int.tryParse('${data['fieldIndex'] ?? event['fieldIndex']}');
     if (index == null || index < 0 || index >= fields.length) return null;
     return fields[index].id;
   }
@@ -633,6 +1072,8 @@ class AppController extends ChangeNotifier {
     monitoring = false;
     starting = false;
     _healthTimer?.cancel();
+    _elimsTimer?.cancel();
+    eliminationsMode = false;
     _healthTimer = null;
     final subscription = _eventSubscription;
     _eventSubscription = null;
@@ -683,6 +1124,7 @@ class AppController extends ChangeNotifier {
     _tmRevision++;
     _obsRevision++;
     _healthTimer?.cancel();
+    _elimsTimer?.cancel();
     unawaited(_eventSubscription?.cancel());
     unawaited(_obsErrors?.cancel());
     _monitorTm?.dispose();

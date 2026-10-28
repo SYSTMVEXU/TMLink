@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
+import 'package:tmlink/core/app_credentials.dart';
 import 'package:tmlink/core/endpoints.dart';
 import 'package:tmlink/core/config.dart';
 
@@ -20,11 +21,12 @@ class AuthManager {
     required http.Client client,
     required String clientId,
     required String clientSecret,
+    bool bundled = false,
     Duration timeout = const Duration(seconds: 10),
   }) async {
     if (clientId.isEmpty || clientSecret.isEmpty) {
       throw const AppException(
-        'Add your TM client ID and client secret in Connections, or launch with the VEX_TM environment variables.',
+        'App authorization is unavailable. Set the DWAB environment variables for a Debug run, or install the official ATS release.',
       );
     }
     try {
@@ -39,9 +41,15 @@ class AuthManager {
           )
           .timeout(timeout);
       if (response.statusCode != 200) {
+        if (bundled &&
+            (response.statusCode == 400 || response.statusCode == 401)) {
+          throw const AppAuthorizationUpdateRequired(
+            'App authorization was rejected. Install the latest ATS version and retry. If it continues, contact the app maintainer.',
+          );
+        }
         throw AppException(
           response.statusCode == 400 || response.statusCode == 401
-              ? 'TM authorization was rejected. Check your client ID and secret.'
+              ? 'TM authorization was rejected. Check the app credentials and retry.'
               : 'TM authorization service is unavailable (HTTP ${response.statusCode}). Retry when internet access is restored.',
         );
       }
@@ -65,12 +73,15 @@ class AuthManager {
   }
 
   static Future<String> getOAuthToken() async {
+    final credentials = Config.credentials;
+    credentials.validate();
     final client = http.Client();
     try {
       return (await fetchToken(
         client: client,
-        clientId: Config.clientId,
-        clientSecret: Config.clientSecret,
+        clientId: credentials.clientId,
+        clientSecret: credentials.clientSecret,
+        bundled: credentials.isBundled,
       )).value;
     } finally {
       client.close();

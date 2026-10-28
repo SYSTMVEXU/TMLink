@@ -1,10 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:tmlink/core/app_controller.dart';
+import 'package:tmlink/core/config.dart';
 import 'package:tmlink/pages/dashboard_page.dart';
+import 'package:tmlink/pages/photos_page.dart';
 import 'package:tmlink/pages/settings_page.dart';
 import 'package:tmlink/ui/app_theme.dart';
 import 'package:tmlink/ui/components.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,7 +21,7 @@ class TMLinkApp extends StatelessWidget {
   const TMLinkApp({super.key, this.controller});
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'TMLink',
+    title: 'Automated Tournament Stream',
     debugShowCheckedModeBanner: false,
     themeMode: ThemeMode.system,
     theme: appTheme(Brightness.light),
@@ -34,18 +39,43 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late final AppController _app;
+  Timer? _authorizationTimer;
   int _page = 0;
   @override
   void initState() {
     super.initState();
     _app = widget.controller ?? AppController();
     _app.initialize();
+    // Refresh date-based notices even when the app remains open overnight.
+    _authorizationTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _authorizationTimer?.cancel();
     if (widget.controller == null) _app.dispose();
     super.dispose();
+  }
+
+  Future<void> _downloadUpdate() async {
+    try {
+      if (await launchUrl(
+        Uri.parse(Config.releasesUrl),
+        mode: LaunchMode.externalApplication,
+      )) {
+        return;
+      }
+    } catch (_) {
+      // Browser launch failures should not interrupt OBS or TM monitoring.
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: SelectableText('Download ATS at ${Config.releasesUrl}'),
+      ),
+    );
   }
 
   @override
@@ -59,6 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
           onConnections: () => setState(() => _page = 1),
         ),
         SettingsPage(controller: _app),
+        PhotosPage(controller: _app, selected: _page == 2),
         ActivityPage(controller: _app),
       ];
       return Scaffold(
@@ -68,6 +99,30 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: Column(
                 children: [
+                  if (_app.initialized && _app.authorizationNotice != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: Panel(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _app.authorizationNotice!,
+                              key: const ValueKey('authorization-notice'),
+                            ),
+                            const SizedBox(height: 8),
+                            TextButton.icon(
+                              onPressed: _downloadUpdate,
+                              icon: const Icon(
+                                CupertinoIcons.arrow_down_circle,
+                              ),
+                              label: const Text('Download update'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   if (narrow)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -79,7 +134,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(width: 8),
                           const Text(
-                            'TMLink',
+                            'ATS',
                             style: TextStyle(fontWeight: FontWeight.w700),
                           ),
                           const Spacer(),
@@ -118,6 +173,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   NavigationDestination(
                     icon: Icon(CupertinoIcons.link),
                     label: 'Connections',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(CupertinoIcons.photo),
+                    label: 'Photos',
                   ),
                   NavigationDestination(
                     icon: Icon(CupertinoIcons.clock),
@@ -169,7 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'TMLink',
+                        'ATS',
                         style: TextStyle(
                           fontSize: 19,
                           fontWeight: FontWeight.w700,
@@ -201,7 +260,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           _nav(context, 0, CupertinoIcons.arrow_branch, 'Scene Routing'),
           _nav(context, 1, CupertinoIcons.link, 'Connections'),
-          _nav(context, 2, CupertinoIcons.clock, 'Activity'),
+          _nav(context, 2, CupertinoIcons.photo, 'Photos'),
+          _nav(context, 3, CupertinoIcons.clock, 'Activity'),
           const Spacer(),
           Panel(
             padding: const EdgeInsets.all(14),

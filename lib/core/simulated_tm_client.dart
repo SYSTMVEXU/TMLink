@@ -51,7 +51,24 @@ class SimulatedTmClient extends TmApiClient {
         !fieldSet.fields.any((field) => field.id == fieldId)) {
       return;
     }
-    _simulatedEvents.add({'type': 'fieldActivated', 'fieldId': fieldId});
+    _simulatedEvents.add({'type': 'matchStarted', 'fieldID': fieldId});
+  }
+
+  void queueMatch(String fieldId) {
+    if (_closed ||
+        !_listening ||
+        !fieldSet.fields.any((field) => field.id == fieldId)) {
+      return;
+    }
+    _simulatedEvents.add({
+      'type': 'fieldMatchAssigned',
+      'fieldID': fieldId,
+      'match': {
+        'round': 'QUAL',
+        'match': fieldSet.fields.indexWhere((field) => field.id == fieldId) + 1,
+      },
+    });
+    _simulatedEvents.add({'type': 'fieldActivated', 'fieldID': fieldId});
   }
 
   @override

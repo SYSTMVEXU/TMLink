@@ -2,7 +2,40 @@
 
 ## Unreleased
 
-Development summary through October 10, 2026. These changes have not been published as a new release; the package version remains `1.0.0+1`.
+### TM scene trigger compatibility
+
+- Restored the Python flow: `fieldMatchAssigned` shows Upcoming Match, the automatic `fieldActivated` packet is ignored, and `matchStarted` switches to the mapped field scene.
+- Recognized native TM `fieldID` identifiers as well as `fieldId` for match-start routing.
+- Preserved native `fieldID`/`fieldSetID` values when parsing API field metadata.
+- Added safe Activity entries for received scene triggers and missing/unknown field identifiers.
+- Added regression packets from the original Python log and a test replaying them through TM and OBS WebSocket connections.
+
+### ATS branding and team image folder
+
+- Renamed the visible application to **Automated Tournament Stream (ATS)** and the macOS app bundle to `ATS.app`.
+- Added a one-time Documents folder selection. ATS creates `ATS/teams.csv`, `ATS/robot_images/`, and `ATS/team_photos/`, and macOS access is restored from a saved security-scoped bookmark.
+- Added Finder and roster refresh controls, plus setup guidance for team-number image filenames and fallback images.
+- Added a **Photos** workspace with roster and filename discovery, team search, robot/team photo filters, large previews, and visible fallback or missing-image states.
+
+Development summary through October 27, 2026. These changes have not been published as a new release; the package version remains `1.0.0+1`.
+
+### Bundled desktop app authorization
+
+- Added protected, manual macOS/Windows/Linux release builds using GitHub environment secrets, random per-build string masking, and Flutter release obfuscation.
+- Kept bundled credentials out of editable settings and OS credential storage; retained an optional manual pair under **Advanced authorization** with atomic override selection.
+- Added a persistent update banner in the 30 days before credential expiration, a download action, and clear errors for expired or rejected bundled authorization.
+- Added distribution scans for raw credential literals and debug files, package checksums, and separate AES-256 encrypted debug-symbol downloads.
+- Kept original credentials out of Flutter child-process environments and removed temporary definitions/staging files after release builds.
+- Retained in-memory OAuth caching and cleared cached tokens when a connection is disposed.
+- Added cross-language credential fixtures, expiration/override tests, automatic-authorization UI coverage, and release-tool encryption checks.
+- Selected Xcode 16.4 on the release runner to avoid Xcode 27's multi-architecture `lipo` incompatibility with the pinned Flutter SDK.
+
+### GitHub Actions and DWAB credential setup
+
+- Added CI analysis and tests without access to DWAB credentials.
+- Added a manual, default-branch-only DWAB authorization check using the `dwab` GitHub environment and step-scoped client ID/secret values.
+- Added a local authorization diagnostic that reports sanitized results without printing credentials or OAuth tokens.
+- Documented local Keychain setup, GitHub environment secrets, access controls, credential rotation, and the limitations of secrets embedded in desktop builds.
 
 ### macOS build and desktop support
 

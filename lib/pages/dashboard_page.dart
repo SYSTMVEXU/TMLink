@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:tmlink/core/app_controller.dart';
 import 'package:tmlink/ui/components.dart';
+import 'package:tmlink/ui/upcoming_panel.dart';
 
 class DashboardPage extends StatelessWidget {
   final AppController controller;
@@ -171,7 +172,7 @@ class DashboardPage extends StatelessWidget {
                       app.monitoring
                           ? app.developerMode
                                 ? 'Each activation switches the real OBS program scene using your test routing.'
-                                : 'Field activations switch OBS using your saved scene routing.'
+                                : 'Queued matches show the upcoming preview. Match starts show the mapped field camera.'
                           : issue ??
                                 'All fields are mapped. Start monitoring to enable automatic scene switching.',
                       style: theme.textTheme.bodySmall,
@@ -270,6 +271,17 @@ class DashboardPage extends StatelessWidget {
                               size: 14,
                             ),
                             label: Text('Activate ${field.name}'),
+                          ),
+                        for (final field in app.fields)
+                          OutlinedButton.icon(
+                            onPressed: app.monitoring
+                                ? () => app.simulateMatchQueue(field.id)
+                                : null,
+                            icon: const Icon(
+                              CupertinoIcons.list_bullet,
+                              size: 14,
+                            ),
+                            label: Text('Queue ${field.name}'),
                           ),
                       ],
                     ),
@@ -498,6 +510,8 @@ class DashboardPage extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(height: 20),
+          UpcomingPanel(controller: app),
           const SizedBox(height: 18),
           Row(
             children: [

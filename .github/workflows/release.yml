@@ -1,0 +1,78 @@
+name: Build desktop releases
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    environment: dwab
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos
+            runner: macos-15
+          - target: windows
+            runner: windows-2025
+          - target: linux
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.41.2'
+          channel: stable
+          cache: false
+      # Xcode 27 changes lipo's multi-architecture verification. Use the tested
+      # compatible toolchain supplied by macos-15 for universal builds.
+      - name: Select Xcode 16.4
+        if: runner.os == 'macOS'
+        run: sudo xcode-select --switch /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libstdc++-12-dev libsecret-1-dev gnupg
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter test --dart-define-from-file=test/fixtures/bundled_credentials.json test/config_bundle_test.dart
+      - name: Check release tooling
+        shell: bash
+        run: python3 -m unittest discover -s tool -p 'test_*.py'
+      # Only this step receives the originals. The helper removes them from
+      # child-process environments and only masked values reach Flutter.
+      - name: Build and package release
+        shell: bash
+        env:
+          VEX_TM_CLIENT_ID: ${{ secrets.VEX_TM_CLIENT_ID }}
+          VEX_TM_CLIENT_SECRET: ${{ secrets.VEX_TM_CLIENT_SECRET }}
+          VEX_TM_CREDENTIAL_EXPIRES_AT: ${{ vars.VEX_TM_CREDENTIAL_EXPIRES_AT }}
+          ATS_SYMBOLS_PASSPHRASE: ${{ secrets.ATS_SYMBOLS_PASSPHRASE }}
+        run: python3 tool/build_release.py ${{ matrix.target }}
+      - name: Upload user downloads
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ATS-${{ matrix.target }}
+          path: build/distributions/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload encrypted debug symbols
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: encrypted-symbols-${{ matrix.target }}
+          path: build/private-symbols/*.gpg
+          if-no-files-found: error
+          retention-days: 30
+      - name: Remove release intermediates
+        if: always()
+        shell: bash
+        run: python3 -c "import shutil; shutil.rmtree('build', ignore_errors=True)"

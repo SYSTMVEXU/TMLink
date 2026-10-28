@@ -4,8 +4,18 @@ import 'package:tmlink/core/app_controller.dart';
 import 'package:tmlink/core/app_settings.dart';
 import 'package:tmlink/core/obs_client.dart';
 import 'package:tmlink/core/tm_api_client.dart';
+import 'package:tmlink/core/upcoming_match.dart';
 
 class MemorySettings extends SettingsRepository {
+  UpcomingSettings upcoming = const UpcomingSettings();
+  @override
+  Future<UpcomingSettings> loadUpcoming() async => upcoming;
+  @override
+  Future<void> saveUpcoming(UpcomingSettings value) async {
+    if (failSave) throw const AppException('Save failed');
+    upcoming = value;
+  }
+
   AppSettings settings = const AppSettings(
     tmHost: 'localhost:8080',
     tmApiKey: 'test-key',
@@ -49,6 +59,14 @@ class MemorySettings extends SettingsRepository {
 }
 
 class FakeTm extends TmApiClient {
+  List<dynamic> matches = [];
+  var matchLoads = 0;
+  @override
+  Future<List<dynamic>> getMatches(String divisionId) async {
+    matchLoads++;
+    return matches;
+  }
+
   final events = StreamController<Map<String, dynamic>>.broadcast();
   bool closed = false;
   bool failConnect = false;
@@ -103,7 +121,22 @@ class FakeTm extends TmApiClient {
 class FakeObs extends ObsClient {
   final errorEvents = StreamController<ObsException>.broadcast();
   final switches = <String>[];
-  List<String> sceneNames = ['Main', 'Break', 'Skills'];
+  List<String> sceneNames = ['Main', 'Break', 'Skills', 'Upcoming Match'];
+  final inputUpdates = <Map<String, dynamic>>[];
+  final failInputs = <String>{};
+  Completer<void>? inputGate;
+  @override
+  Future<void> setInputSettings(
+    String name,
+    Map<String, dynamic> settings,
+  ) async {
+    if (failInputs.contains(name)) {
+      throw const ObsException('Source unavailable');
+    }
+    inputUpdates.add({'name': name, 'settings': settings});
+    await inputGate?.future;
+  }
+
   bool connected = false;
   bool closed = false;
   bool failConnect = false;

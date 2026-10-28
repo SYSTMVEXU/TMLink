@@ -16,8 +16,6 @@ class _SettingsPageState extends State<SettingsPage> {
   final _form = GlobalKey<FormState>();
   final _tmHost = TextEditingController();
   final _tmKey = TextEditingController();
-  final _clientId = TextEditingController();
-  final _clientSecret = TextEditingController();
   final _obsUrl = TextEditingController();
   final _obsPassword = TextEditingController();
   final _detector = TmInstanceDetector();
@@ -45,8 +43,6 @@ class _SettingsPageState extends State<SettingsPage> {
     for (final entry in {
       _tmHost: s.tmHost,
       _tmKey: s.tmApiKey,
-      _clientId: s.clientId,
-      _clientSecret: s.clientSecret,
       _obsUrl: s.obsUrl,
       _obsPassword: s.obsPassword,
     }.entries) {
@@ -64,14 +60,9 @@ class _SettingsPageState extends State<SettingsPage> {
         tmApiKey: app.developerMode
             ? app.settings.tmApiKey
             : _tmKey.text.trim(),
-        clientId: app.developerMode
-            ? app.settings.clientId
-            : _clientId.text.trim(),
-        clientSecret: app.developerMode
-            ? app.settings.clientSecret
-            : _clientSecret.text,
         obsUrl: _obsUrl.text.trim(),
         obsPassword: _obsPassword.text,
+        advancedUserMode: app.settings.advancedUserMode,
       ),
     );
     if (!mounted || !ok) return;
@@ -124,6 +115,21 @@ class _SettingsPageState extends State<SettingsPage> {
         !app.testingScene;
     final checkEnabled = enabled && !_dirty && app.storageAvailable;
     final tmEnabled = enabled && !app.developerMode;
+    final modeCard = Panel(
+      child: SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Advanced user mode'),
+        subtitle: const Text(
+          'Show technical match-data and OBS source settings.',
+        ),
+        value: app.settings.advancedUserMode,
+        onChanged: enabled
+            ? (value) async {
+                await app.setAdvancedUserMode(value);
+              }
+            : null,
+      ),
+    );
     final tmCard = Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -168,40 +174,6 @@ class _SettingsPageState extends State<SettingsPage> {
             helper: 'Use the key configured for this tournament server.',
           ),
           const SizedBox(height: 20),
-          ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            title: const Text(
-              'Client authorization',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
-            subtitle: Text(
-              app.settings.effectiveClientId.isEmpty
-                  ? 'Add your client credentials here'
-                  : 'Saved credentials or launch environment available',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            childrenPadding: const EdgeInsets.only(top: 12),
-            children: [
-              TextFormField(
-                controller: _clientId,
-                enabled: tmEnabled,
-                onChanged: _edited,
-                autocorrect: false,
-                decoration: const InputDecoration(labelText: 'Client ID'),
-              ),
-              const SizedBox(height: 16),
-              SecretField(
-                controller: _clientSecret,
-                label: 'Client secret',
-                enabled: tmEnabled,
-                onChanged: _edited,
-                helper:
-                    'Leave both blank to use VEX_TM_CLIENT_ID and VEX_TM_CLIENT_SECRET from your launch environment.',
-              ),
-              const SizedBox(height: 12),
-            ],
-          ),
-          const SizedBox(height: 16),
           SelectableText(
             app.tmMessage,
             style: TextStyle(
@@ -344,7 +316,7 @@ class _SettingsPageState extends State<SettingsPage> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Passwords and API credentials are stored in your system keychain.',
+                  'The TM API key and OBS password are stored in your system keychain.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -366,24 +338,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   'Set up your services once. Check access before you go live.',
             ),
             const SizedBox(height: 24),
-            Panel(
-              padding: const EdgeInsets.all(12),
-              child: SwitchListTile.adaptive(
-                title: const Text('Developer mode'),
-                subtitle: const Text(
-                  'Bypass TM and simulate field activations. OBS switches its real program scene. This mode resets when you restart the app.',
-                ),
-                value: app.developerMode,
-                onChanged:
-                    enabled &&
-                        !_scanning &&
-                        !app.savingRouting &&
-                        app.storageAvailable
-                    ? app.setDeveloperMode
-                    : null,
-              ),
-            ),
-            const SizedBox(height: 20),
             if (app.notice != null) ...[
               NoticeBanner(message: app.notice!, onDismiss: app.clearNotice),
               const SizedBox(height: 20),
@@ -406,6 +360,8 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 20),
             ],
+            modeCard,
+            const SizedBox(height: 20),
             LayoutBuilder(
               builder: (context, constraints) => constraints.maxWidth >= 800
                   ? Row(
@@ -476,14 +432,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     app.removeListener(_onControllerChanged);
     _detector.dispose();
-    for (final controller in [
-      _tmHost,
-      _tmKey,
-      _clientId,
-      _clientSecret,
-      _obsUrl,
-      _obsPassword,
-    ]) {
+    for (final controller in [_tmHost, _tmKey, _obsUrl, _obsPassword]) {
       controller.dispose();
     }
     super.dispose();
