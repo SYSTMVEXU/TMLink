@@ -1,5 +1,6 @@
 import base64
 from datetime import datetime, timezone
+import io
 import json
 import os
 from pathlib import Path
@@ -7,10 +8,11 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from build_release import (
     ReleaseError, child_environment, credential_defines, encrypt_symbols,
-    gnupg_command, is_debug_file, scan_distribution, stop_gpg_agent,
+    gnupg_command, is_debug_file, run, scan_distribution, stop_gpg_agent,
 )
 
 
@@ -58,6 +60,21 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn("VEX_TM_CLIENT_SECRET", env)
         self.assertNotIn("VEX_TM_CLIENT_ID", env)
         self.assertNotIn("ATS_SYMBOLS_PASSPHRASE", env)
+
+    def test_unicode_build_output_is_redacted_and_safe_for_windows_stdout(self):
+        buffer = io.BytesIO()
+        stdout = io.TextIOWrapper(buffer, encoding="cp1252")
+        process = subprocess.CompletedProcess(
+            ["flutter"], 0, stdout="✓ built synthetic-private-value\n".encode(),
+        )
+        with patch("build_release.subprocess.run", return_value=process), patch("build_release.sys.stdout", stdout):
+            run(["flutter"], {}, ("synthetic-private-value",))
+        stdout.flush()
+        output = buffer.getvalue().decode("cp1252")
+        self.assertIn("[redacted]", output)
+        self.assertIn(r"\u2713", output)
+        self.assertNotIn("synthetic-private-value", output)
+        stdout.close()
 
     def test_distribution_rejects_plaintext_and_debug_symbols(self):
         for name in ("app.pdb", "App.dSYM/Contents/DWARF/App", "app.symbols", "app.map.json"):

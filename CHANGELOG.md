@@ -15,6 +15,7 @@ Initial public release of Automated Tournament Stream (ATS).
 - Identify DWAB HTTP 429 responses as authorization rate limits rather than internet outages.
 - Build macOS, Windows, and Linux release packages in GitHub Actions with bundled app authorization, credential-literal scans, checksums, and separately encrypted debug symbols.
 - Convert Windows file paths for Git's MSYS GnuPG and stop temporary GnuPG agents after symbol encryption.
+- Keep Flutter's Unicode build output safe for Windows console encodings while redacting private values from release logs.
 
 macOS music automation is available only on macOS. TIDAL menu control also requires Accessibility approval. Desktop packages are not publisher signed or notarized.
 

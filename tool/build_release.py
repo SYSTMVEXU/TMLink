@@ -72,6 +72,10 @@ def run(command, environment, private_values=(), stdin=None):
         if value:
             output = output.replace(value, "[redacted]")
     if output.strip():
+        # Redirected Windows stdout may use a legacy code page even when
+        # Flutter emits UTF-8 status symbols. Keep logging from aborting a build.
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        output = output.encode(encoding, errors="backslashreplace").decode(encoding)
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
     if result.returncode:
         raise ReleaseError("A release build or packaging step failed; see the sanitized output above.")
@@ -275,9 +279,10 @@ def main():
     except ReleaseError as error:
         print(f"Release stopped: {error}", file=sys.stderr)
         return 1
-    except Exception:
+    except Exception as error:
         # Unexpected exceptions can contain process arguments or credential data.
-        print("Release stopped due to an unexpected build or filesystem error.", file=sys.stderr)
+        # Report only the exception class, never its potentially sensitive text.
+        print(f"Release stopped due to an unexpected {type(error).__name__} in the build helper.", file=sys.stderr)
         return 1
     return 0
 
