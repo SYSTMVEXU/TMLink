@@ -97,15 +97,55 @@ def scan_distribution(directory, values):
             raise ReleaseError("Debug symbols were found in the distribution. Packaging was stopped.")
 
 
+def gnupg_command(program, arguments, environment):
+    """Give Git's MSYS tools Unix paths, and native tools native paths."""
+    converter = Path(program).with_name("cygpath.exe")
+    use_msys_paths = sys.platform == "win32" and converter.is_file()
+    command = [str(program)]
+    for argument in arguments:
+        if use_msys_paths and isinstance(argument, os.PathLike):
+            converted = subprocess.run(
+                [str(converter), "--absolute", "--unix", str(argument)],
+                cwd=ROOT, env=environment, capture_output=True, text=True,
+                timeout=10,
+            )
+            if converted.returncode or not converted.stdout.strip():
+                raise ReleaseError("Could not convert a Windows path for Git's GnuPG.")
+            command.append(converted.stdout.strip())
+        else:
+            command.append(str(argument))
+    return command
+
+
+def stop_gpg_agent(gpg, home, environment):
+    """Release only the agent for our temporary home before deleting it."""
+    name = "gpgconf.exe" if sys.platform == "win32" else "gpgconf"
+    gpgconf = Path(gpg).with_name(name)
+    if not gpgconf.is_file():
+        return
+    try:
+        subprocess.run(
+            gnupg_command(gpgconf, ["--homedir", home, "--kill", "gpg-agent"], environment),
+            cwd=ROOT, env=environment, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired, ReleaseError):
+        # Cleanup must not hide an earlier encryption failure.
+        pass
+
+
 def encrypt_symbols(source_zip, destination, passphrase, environment, gpg, home):
     if len(passphrase) < 32 or "\n" in passphrase or "\r" in passphrase:
         raise ReleaseError("Use a single-line ATS_SYMBOLS_PASSPHRASE of at least 32 characters.")
     home.mkdir(mode=0o700)
-    run([
-        gpg, "--homedir", home, "--batch", "--yes", "--no-symkey-cache",
-        "--pinentry-mode", "loopback", "--passphrase-fd", "0",
-        "--symmetric", "--cipher-algo", "AES256", "--output", destination, source_zip,
-    ], environment, (passphrase,), stdin=(passphrase + "\n").encode())
+    try:
+        run(gnupg_command(gpg, [
+            "--homedir", home, "--batch", "--yes", "--no-symkey-cache",
+            "--pinentry-mode", "loopback", "--passphrase-fd", "0",
+            "--symmetric", "--cipher-algo", "AES256", "--output", destination, source_zip,
+        ], environment), environment, (passphrase,), stdin=(passphrase + "\n").encode())
+    finally:
+        stop_gpg_agent(gpg, home, environment)
 
 
 def build(target):

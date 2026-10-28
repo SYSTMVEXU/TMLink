@@ -14,6 +14,7 @@ Initial public release of Automated Tournament Stream (ATS).
 - Check/request macOS Automation permission when music automation is enabled, and provide a two-second pause/resume test independent of TM.
 - Identify DWAB HTTP 429 responses as authorization rate limits rather than internet outages.
 - Build macOS, Windows, and Linux release packages in GitHub Actions with bundled app authorization, credential-literal scans, checksums, and separately encrypted debug symbols.
+- Convert Windows file paths for Git's MSYS GnuPG and stop temporary GnuPG agents after symbol encryption.
 
 macOS music automation is available only on macOS. TIDAL menu control also requires Accessibility approval. Desktop packages are not publisher signed or notarized.
 

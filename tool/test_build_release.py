@@ -10,7 +10,7 @@ import unittest
 
 from build_release import (
     ReleaseError, child_environment, credential_defines, encrypt_symbols,
-    is_debug_file, scan_distribution,
+    gnupg_command, is_debug_file, scan_distribution, stop_gpg_agent,
 )
 
 
@@ -79,7 +79,7 @@ class ReleaseTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("gpg"), "GnuPG is required for the encryption integration check")
     def test_symbols_can_only_be_decrypted_with_the_maintainer_passphrase(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(prefix="ats symbols test ") as directory:
             root = Path(directory)
             source = root / "symbols.zip"
             source.write_bytes(b"synthetic-private-debug-symbols")
@@ -87,15 +87,22 @@ class ReleaseTests(unittest.TestCase):
             env = child_environment(dict(os.environ))
             password = self.environment["ATS_SYMBOLS_PASSPHRASE"]
             home = root / "gnupg"
-            encrypt_symbols(source, encrypted, password, env, shutil.which("gpg"), home)
-            self.assertNotIn(source.read_bytes(), encrypted.read_bytes())
-            command = [shutil.which("gpg"), "--homedir", str(home), "--batch", "--no-symkey-cache",
-                       "--pinentry-mode", "loopback", "--passphrase-fd", "0", "--decrypt", str(encrypted)]
-            failed = subprocess.run(command, input=b"wrong-passphrase\n", capture_output=True, env=env)
-            self.assertNotEqual(failed.returncode, 0)
-            result = subprocess.run(command, input=(password + "\n").encode(), capture_output=True, env=env)
-            self.assertEqual(result.returncode, 0)
-            self.assertEqual(result.stdout, source.read_bytes())
+            gpg = shutil.which("gpg")
+            try:
+                encrypt_symbols(source, encrypted, password, env, gpg, home)
+                self.assertNotIn(source.read_bytes(), encrypted.read_bytes())
+                command = gnupg_command(gpg, [
+                    "--homedir", home, "--batch", "--no-symkey-cache",
+                    "--pinentry-mode", "loopback", "--passphrase-fd", "0",
+                    "--decrypt", encrypted,
+                ], env)
+                failed = subprocess.run(command, input=b"wrong-passphrase\n", capture_output=True, env=env)
+                self.assertNotEqual(failed.returncode, 0)
+                result = subprocess.run(command, input=(password + "\n").encode(), capture_output=True, env=env)
+                self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+                self.assertEqual(result.stdout, source.read_bytes())
+            finally:
+                stop_gpg_agent(gpg, home, env)
 
 
 if __name__ == "__main__":
