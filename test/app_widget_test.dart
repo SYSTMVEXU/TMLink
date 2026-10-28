@@ -13,6 +13,16 @@ import 'package:tmlink/core/app_settings.dart';
 import 'test_support.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const assetsChannel = MethodChannel('com.ats.team_assets');
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assetsChannel, (_) async => null);
+  });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assetsChannel, null);
+  });
   setUpAll(() async {
     // Load the native font for human-reviewable previews on macOS.
     final font = File('/System/Library/Fonts/SFNS.ttf');
@@ -92,38 +102,32 @@ void main() {
           expect(tester.takeException(), isNull);
           await tester.tap(find.text('Connections').first);
           await tester.pumpAndSettle();
-          await tester.ensureVisible(find.text('Developer mode'));
-          await tester.tap(find.text('Developer mode'));
+          expect(find.text('Developer mode'), findsNothing);
+          await tester.ensureVisible(find.text('Advanced user mode'));
+          await tester.tap(find.text('Advanced user mode'));
           await tester.pumpAndSettle();
-          expect(fixture.app.developerMode, true);
+          expect(fixture.app.settings.advancedUserMode, true);
           await preview(
             tester,
-            'developer-connections-${size.width.toInt()}-${dark ? 'dark' : 'light'}',
+            'advanced-connections-${size.width.toInt()}-${dark ? 'dark' : 'light'}',
           );
           await tester.tap(find.text('Scene Routing').first);
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
-          expect(find.text('Test Field 1'), findsOneWidget);
-          expect(find.text('Activate Test Field 1'), findsOneWidget);
-          for (final field in fixture.app.fields) {
-            await fixture.app.setMapping(field.id, 'Main');
-          }
+          expect(find.text('Match data and OBS source names'), findsOneWidget);
+          await tester.ensureVisible(find.text('Start monitoring'));
+          await tester.tap(find.text('Start monitoring'));
           await tester.pumpAndSettle();
-          await tester.ensureVisible(find.text('Start simulation'));
-          await tester.tap(find.text('Start simulation'));
-          await tester.pumpAndSettle();
-          expect(find.text('SIMULATION RUNNING'), findsOneWidget);
-          await tester.ensureVisible(find.text('Activate Test Field 1'));
-          await tester.tap(find.text('Activate Test Field 1'));
+          fixture.monitor.events.add({'type': 'matchStarted', 'fieldID': 10});
           await tester.pumpAndSettle();
           expect(fixture.obs.switches, ['Main']);
-          expect(fixture.app.activeFieldId, 'test-1');
+          expect(fixture.app.activeFieldId, '10');
           await preview(
             tester,
-            'simulator-${size.width.toInt()}-${dark ? 'dark' : 'light'}',
+            'monitoring-${size.width.toInt()}-${dark ? 'dark' : 'light'}',
           );
-          await tester.ensureVisible(find.text('Stop simulation'));
-          await tester.tap(find.text('Stop simulation'));
+          await tester.ensureVisible(find.text('Stop monitoring'));
+          await tester.tap(find.text('Stop monitoring'));
           await tester.pumpAndSettle();
           expect(fixture.app.monitoring, false);
           await tester.pumpWidget(const SizedBox());

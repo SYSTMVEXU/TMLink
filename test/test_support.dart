@@ -59,6 +59,9 @@ class MemorySettings extends SettingsRepository {
 }
 
 class FakeTm extends TmApiClient {
+  @override
+  Future<List<dynamic>> getTeams() async => [];
+
   List<dynamic> matches = [];
   var matchLoads = 0;
   @override
