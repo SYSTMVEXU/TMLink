@@ -1071,8 +1071,9 @@ class AppController extends ChangeNotifier {
         if (revision != _monitorRevision || (!starting && !monitoring)) return;
         if (event['type'] == 'matchStarted') {
           _scheduleMatchMusicAction(pause: true);
-        } else if (event['type'] == 'matchFinished' ||
-            event['type'] == 'matchScored') {
+        } else if (event['type'] == 'matchStopped') {
+          // TM emits matchStopped when the match ends. Scoring is a separate
+          // action and must not resume music during another running match.
           _scheduleMatchMusicAction(pause: false);
         }
         if (event['type'] == 'fieldActivated') {

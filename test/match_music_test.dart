@@ -65,7 +65,7 @@ void main() {
       expect(calls.map((call) => call.method), ['requestPermission']);
       fixture.monitor.events.add({'type': 'matchStarted', 'fieldID': 10});
       await settleMusic();
-      fixture.monitor.events.add({'type': 'matchFinished', 'fieldID': 10});
+      fixture.monitor.events.add({'type': 'matchStopped', 'fieldID': 10});
       await settleMusic();
       expect(calls.map((call) => call.method), [
         'requestPermission',
@@ -83,7 +83,7 @@ void main() {
     await fixture.ready();
     await fixture.app.startMonitoring();
     fixture.monitor.events.add({'type': 'matchStarted', 'fieldID': 10});
-    fixture.monitor.events.add({'type': 'matchFinished', 'fieldID': 10});
+    fixture.monitor.events.add({'type': 'matchStopped', 'fieldID': 10});
     await settleMusic();
     expect(calls, isEmpty);
     expect(fixture.obs.switches, ['Main']);
@@ -108,6 +108,42 @@ void main() {
       isTrue,
     );
   });
+
+  test(
+    'scoring and queuing do not resume music; only match stop does',
+    () async {
+      await fixture.ready();
+      await enableMusic();
+      await fixture.app.startMonitoring();
+      fixture.monitor.events.add({'type': 'matchStarted', 'fieldID': 10});
+      await settleMusic();
+
+      fixture.monitor.events.add({'type': 'matchScored', 'fieldID': 10});
+      fixture.monitor.events.add({
+        'type': 'fieldMatchAssigned',
+        'fieldID': 20,
+        'match': {'round': 'QUAL', 'match': 2},
+      });
+      fixture.monitor.events.add({'type': 'fieldActivated', 'fieldID': 20});
+      await settleMusic();
+      expect(calls.map((call) => call.method), [
+        'requestPermission',
+        'pausePlaying',
+      ]);
+
+      fixture.monitor.events.add({'type': 'matchStopped', 'fieldID': 10});
+      await settleMusic();
+      fixture.monitor.events.add({'type': 'matchStopped', 'fieldID': 10});
+      fixture.monitor.events.add({'type': 'matchScored', 'fieldID': 10});
+      await settleMusic();
+      expect(calls.map((call) => call.method), [
+        'requestPermission',
+        'pausePlaying',
+        'resumePlayers',
+      ]);
+      expect(fixture.obs.switches, ['Main', 'Upcoming Match']);
+    },
+  );
 
   test('a pause that finishes after Stop is immediately resumed', () async {
     await fixture.ready();

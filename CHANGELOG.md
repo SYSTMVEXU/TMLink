@@ -10,6 +10,7 @@ Initial public release of Automated Tournament Stream (ATS).
 - Manage robot images and team photos in the Documents/ATS folder, with a searchable Photos gallery and image previews.
 - Offer basic and advanced settings, with saved scene mappings and connection credentials stored in the system keychain.
 - Add optional macOS music automation: pause supported players at match start and resume the players ATS paused at match end.
+- Use TM's documented `matchStopped` event to resume music; queuing or scoring a match never resumes playback.
 - Check/request macOS Automation permission when music automation is enabled, and provide a two-second pause/resume test independent of TM.
 - Identify DWAB HTTP 429 responses as authorization rate limits rather than internet outages.
 - Build macOS, Windows, and Linux release packages in GitHub Actions with bundled app authorization, credential-literal scans, checksums, and separately encrypted debug symbols.
