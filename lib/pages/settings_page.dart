@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:tmlink/core/app_controller.dart';
@@ -63,6 +65,7 @@ class _SettingsPageState extends State<SettingsPage> {
         obsUrl: _obsUrl.text.trim(),
         obsPassword: _obsPassword.text,
         advancedUserMode: app.settings.advancedUserMode,
+        matchMusicAutomation: app.settings.matchMusicAutomation,
       ),
     );
     if (!mounted || !ok) return;
@@ -116,18 +119,49 @@ class _SettingsPageState extends State<SettingsPage> {
     final checkEnabled = enabled && !_dirty && app.storageAvailable;
     final tmEnabled = enabled && !app.developerMode;
     final modeCard = Panel(
-      child: SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text('Advanced user mode'),
-        subtitle: const Text(
-          'Show technical match-data and OBS source settings.',
-        ),
-        value: app.settings.advancedUserMode,
-        onChanged: enabled
-            ? (value) async {
-                await app.setAdvancedUserMode(value);
-              }
-            : null,
+      child: Column(
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Advanced user mode'),
+            subtitle: const Text(
+              'Show technical match-data and OBS source settings.',
+            ),
+            value: app.settings.advancedUserMode,
+            onChanged: enabled
+                ? (value) async {
+                    await app.setAdvancedUserMode(value);
+                  }
+                : null,
+          ),
+          if (Platform.isMacOS && app.settings.advancedUserMode) ...[
+            const Divider(height: 20),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Pause music during matches'),
+              subtitle: const Text(
+                'Pause Spotify, Apple Music, or TIDAL when a match starts; resume when it ends. macOS may ask for Automation permission. TIDAL may also require Accessibility access.',
+              ),
+              value: app.settings.matchMusicAutomation,
+              onChanged: enabled
+                  ? (value) async {
+                      await app.setMatchMusicAutomation(value);
+                    }
+                  : null,
+            ),
+            if (app.settings.matchMusicAutomation)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: enabled
+                      ? () async => app.testMatchMusicAutomation()
+                      : null,
+                  icon: const Icon(CupertinoIcons.music_note),
+                  label: const Text('Test pause and resume'),
+                ),
+              ),
+          ],
+        ],
       ),
     );
     final tmCard = Panel(

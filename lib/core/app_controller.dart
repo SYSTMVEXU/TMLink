@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:tmlink/core/app_credentials.dart';
 import 'package:tmlink/core/app_settings.dart';
 import 'package:tmlink/core/config.dart';
+import 'package:tmlink/core/media_controls.dart';
 import 'package:tmlink/core/obs_client.dart';
 import 'package:tmlink/core/tm_api_client.dart';
 import 'package:tmlink/core/simulated_tm_client.dart';
@@ -56,6 +57,9 @@ class AppController extends ChangeNotifier {
   final Map<String, UpcomingMatch> _matches = {};
   Future<void>? _matchLoading;
   int _matchLoadRevision = -1;
+  final MediaControls _mediaControls = MediaControls();
+  Future<void> _musicActionQueue = Future.value();
+  List<String> _pausedMusicPlayers = [];
   DateTime? _lastElimsRefresh;
   Timer? _elimsTimer;
   ServiceState tmState = ServiceState.disconnected;
@@ -309,6 +313,7 @@ class AppController extends ChangeNotifier {
       await repository.saveAdvancedUserMode(enabled);
       if (_disposed) return false;
       settings = settings.copyWith(advancedUserMode: enabled);
+      if (!enabled) _scheduleMusicResume();
       return true;
     } catch (_) {
       notice = 'Could not save the user mode setting.';
@@ -316,6 +321,69 @@ class AppController extends ChangeNotifier {
     } finally {
       savingSettings = false;
       _changed();
+    }
+  }
+
+  Future<bool> setMatchMusicAutomation(bool enabled) async {
+    if (_disposed || locked || connecting || testingScene) return false;
+    savingSettings = true;
+    notice = null;
+    _changed();
+    try {
+      await repository.saveMatchMusicAutomation(enabled);
+      if (_disposed) return false;
+      settings = settings.copyWith(matchMusicAutomation: enabled);
+      if (enabled) {
+        try {
+          final checked = await _mediaControls.requestPermission();
+          _log(
+            'macOS Automation permission checked for ${checked.join(', ')}.',
+          );
+        } catch (error) {
+          _log('Music permission request: $error', error: true);
+        }
+      } else {
+        _scheduleMusicResume();
+      }
+      return true;
+    } catch (_) {
+      notice = 'Could not save the match music setting.';
+      return false;
+    } finally {
+      savingSettings = false;
+      _changed();
+    }
+  }
+
+  Future<void> testMatchMusicAutomation() async {
+    if (_disposed ||
+        !settings.advancedUserMode ||
+        !settings.matchMusicAutomation) {
+      return;
+    }
+    List<String> paused = const [];
+    try {
+      paused = await _mediaControls.pausePlaying();
+      if (paused.isEmpty) {
+        _log('Music test found no supported player currently playing.');
+        return;
+      }
+      _log('Music test paused ${paused.join(', ')} for two seconds.');
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await _mediaControls.resumePlayers(paused);
+      _log('Music test resumed ${paused.join(', ')}.');
+    } catch (error) {
+      if (paused.isNotEmpty) {
+        try {
+          await _mediaControls.resumePlayers(paused);
+        } catch (resumeError) {
+          _log(
+            'Music test could not resume players: $resumeError',
+            error: true,
+          );
+        }
+      }
+      _log('Music test failed: $error', error: true);
     }
   }
 
@@ -840,6 +908,56 @@ class AppController extends ChangeNotifier {
     await _refreshMatches(eliminationsOnly: true);
   }
 
+  void _scheduleMatchMusicAction({required bool pause}) {
+    if (!settings.advancedUserMode || !settings.matchMusicAutomation) return;
+    _musicActionQueue = _musicActionQueue
+        .then((_) async {
+          if (pause) {
+            if (!settings.advancedUserMode || !settings.matchMusicAutomation) {
+              return;
+            }
+            if (_pausedMusicPlayers.isNotEmpty) return;
+            final paused = await _mediaControls.pausePlaying();
+            _pausedMusicPlayers = paused;
+            if (!settings.advancedUserMode || !settings.matchMusicAutomation) {
+              await _resumePausedMusic();
+            } else if (paused.isNotEmpty) {
+              _log('Paused music while the match is running.');
+            } else {
+              _log(
+                'No supported music app was playing when the match started.',
+              );
+            }
+          } else {
+            await _resumePausedMusic();
+          }
+        })
+        .catchError((Object error) {
+          if (!_disposed) {
+            _log('Music automation failed: $error', error: true);
+          }
+        });
+  }
+
+  void _scheduleMusicResume() {
+    if (_pausedMusicPlayers.isEmpty) return;
+    _musicActionQueue = _musicActionQueue
+        .then((_) => _resumePausedMusic())
+        .catchError((Object error) {
+          if (!_disposed) {
+            _log('Could not resume music: $error', error: true);
+          }
+        });
+  }
+
+  Future<void> _resumePausedMusic() async {
+    if (_pausedMusicPlayers.isEmpty) return;
+    final players = List<String>.of(_pausedMusicPlayers);
+    await _mediaControls.resumePlayers(players);
+    _pausedMusicPlayers = [];
+    if (!_disposed) _log('Resumed music after the match.');
+  }
+
   UpcomingMatch _queuedMatchForEvent(Map<String, dynamic> event) {
     final data = event['data'] is Map<String, dynamic>
         ? event['data'] as Map<String, dynamic>
@@ -934,6 +1052,12 @@ class AppController extends ChangeNotifier {
     _eventSubscription = client.eventStream.listen(
       (event) {
         if (revision != _monitorRevision || (!starting && !monitoring)) return;
+        if (event['type'] == 'matchStarted') {
+          _scheduleMatchMusicAction(pause: true);
+        } else if (event['type'] == 'matchFinished' ||
+            event['type'] == 'matchScored') {
+          _scheduleMatchMusicAction(pause: false);
+        }
         if (event['type'] == 'fieldActivated') {
           // Native TM emits this automatically when a match is queued. The
           // Python integration intentionally waits for matchStarted to show
@@ -1082,6 +1206,7 @@ class AppController extends ChangeNotifier {
     _changed();
     await subscription?.cancel();
     client?.dispose();
+    _scheduleMusicResume();
     if (reason != null) notice = reason;
     _log(
       reason ?? 'Monitoring stopped. No further scene switches will be sent.',
@@ -1119,6 +1244,7 @@ class AppController extends ChangeNotifier {
   @override
   void dispose() {
     if (_disposed) return;
+    _scheduleMusicResume();
     _disposed = true;
     _monitorRevision++;
     _tmRevision++;

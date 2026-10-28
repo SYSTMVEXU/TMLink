@@ -30,5 +30,7 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>ATS uses macOS automation to pause supported music apps when a match starts and resume them when the match ends.</string>
 </dict>
 </plist>

@@ -19,6 +19,7 @@ class AppSettings {
   final String obsUrl;
   final String obsPassword;
   final bool advancedUserMode;
+  final bool matchMusicAutomation;
   const AppSettings({
     this.tmHost = Config.defaultTmIp,
     this.tmApiKey = '',
@@ -27,6 +28,7 @@ class AppSettings {
     this.obsUrl = Config.defaultObsWsUrl,
     this.obsPassword = '',
     this.advancedUserMode = false,
+    this.matchMusicAutomation = false,
   });
 
   AppCredentials resolveCredentials(AppCredentials defaults) => defaults;
@@ -34,15 +36,17 @@ class AppSettings {
   String get effectiveClientId => credentials.clientId;
   String get effectiveClientSecret => credentials.clientSecret;
 
-  AppSettings copyWith({bool? advancedUserMode}) => AppSettings(
-    tmHost: tmHost,
-    tmApiKey: tmApiKey,
-    clientId: clientId,
-    clientSecret: clientSecret,
-    obsUrl: obsUrl,
-    obsPassword: obsPassword,
-    advancedUserMode: advancedUserMode ?? this.advancedUserMode,
-  );
+  AppSettings copyWith({bool? advancedUserMode, bool? matchMusicAutomation}) =>
+      AppSettings(
+        tmHost: tmHost,
+        tmApiKey: tmApiKey,
+        clientId: clientId,
+        clientSecret: clientSecret,
+        obsUrl: obsUrl,
+        obsPassword: obsPassword,
+        advancedUserMode: advancedUserMode ?? this.advancedUserMode,
+        matchMusicAutomation: matchMusicAutomation ?? this.matchMusicAutomation,
+      );
 
   void validate() {
     normalizeTmUrl(tmHost);
@@ -57,6 +61,7 @@ abstract class SettingsRepository {
   Future<void> saveMappings(Map<String, Map<String, String>> mappings);
   Future<Map<String, List<String>>> loadLegacyMappings();
   Future<void> saveAdvancedUserMode(bool enabled) async {}
+  Future<void> saveMatchMusicAutomation(bool enabled) async {}
   Future<Map<String, String>> loadSelection() async => {};
   Future<void> saveSelection(Map<String, String> selections) async {}
   Future<UpcomingSettings> loadUpcoming() async => const UpcomingSettings();
@@ -159,6 +164,7 @@ class LocalSettingsRepository extends SettingsRepository {
             await _secure.read(key: 'obs_ws_password') ??
             '',
         advancedUserMode: prefs.getBool('advanced_user_mode') ?? false,
+        matchMusicAutomation: prefs.getBool('match_music_automation') ?? false,
       );
     } catch (_) {
       throw const AppException(
@@ -196,6 +202,14 @@ class LocalSettingsRepository extends SettingsRepository {
     final prefs = await SharedPreferences.getInstance();
     if (!await prefs.setBool('advanced_user_mode', enabled)) {
       throw const AppException('Could not save the user mode setting.');
+    }
+  }
+
+  @override
+  Future<void> saveMatchMusicAutomation(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!await prefs.setBool('match_music_automation', enabled)) {
+      throw const AppException('Could not save the match music setting.');
     }
   }
 

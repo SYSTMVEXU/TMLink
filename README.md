@@ -16,7 +16,7 @@ When a match is queued, ATS updates the Upcoming Match scene and its team source
 
 In **Upcoming Match preview**, set up the team asset folder once. ATS creates `Documents/ATS/teams.csv`, `Documents/ATS/robot_images/`, and `Documents/ATS/team_photos/`. ATS refreshes the team number, name, and organization in the CSV when it connects to TM. You can edit the CSV manually and choose **Refresh roster**. Add robot images named `{team-number}.png` and team photos named `{team-number}.jpg`; optional fallbacks are `default_robot.png` and `default_robot.jpg`. The **Photos** workspace offers search, filters, and image previews. macOS asks you to grant folder access once and remembers it.
 
-Settings includes **Advanced user mode**. Basic mode keeps the match preview workspace streamlined; advanced mode exposes the division, match refresh, eliminations, and OBS input-name controls.
+Settings includes **Advanced user mode**. Basic mode keeps the match preview workspace streamlined; advanced mode exposes the division, match refresh, eliminations, and OBS input-name controls. On macOS, advanced settings can also pause supported Music, Spotify, and TIDAL players when a match starts, then resume only the players ATS paused when the match ends. macOS Automation approval is required, and TIDAL may also require Accessibility approval.
 
 Routing is stored by TM server, field-set ID, and field ID. Prior positional mappings are migrated when the corresponding fields are loaded. Your selected field set is remembered per server. Unreadable routing can be reset after the original data is backed up. Missing/removed scenes are shown explicitly and prevent monitoring. The Activity log contains the latest 100 entries for the current session.
 

@@ -13,6 +13,10 @@ class MainFlutterWindow: NSWindow {
     assetChannel.setMethodCallHandler { call, result in
       TeamAssetsFolderAccess.shared.handle(call, result: result)
     }
+    let mediaChannel = FlutterMethodChannel(name: "com.ats.media_controls", binaryMessenger: flutterViewController.engine.binaryMessenger)
+    mediaChannel.setMethodCallHandler { call, result in
+      MediaControls.shared.handle(call, result: result)
+    }
 
     title = "Automated Tournament Stream"
     minSize = NSSize(width: 760, height: 560)

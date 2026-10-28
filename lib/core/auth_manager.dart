@@ -47,11 +47,14 @@ class AuthManager {
             'App authorization was rejected. Install the latest ATS version and retry. If it continues, contact the app maintainer.',
           );
         }
-        throw AppException(
-          response.statusCode == 400 || response.statusCode == 401
-              ? 'TM authorization was rejected. Check the app credentials and retry.'
-              : 'TM authorization service is unavailable (HTTP ${response.statusCode}). Retry when internet access is restored.',
-        );
+        throw AppException(switch (response.statusCode) {
+          400 || 401 =>
+            'TM authorization was rejected. Check the app credentials and retry.',
+          429 =>
+            'DWAB is rate limiting ATS authorization requests (HTTP 429). Wait a few minutes before retrying.',
+          _ =>
+            'DWAB authorization service is unavailable (HTTP ${response.statusCode}). Check internet access and retry.',
+        });
       }
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final token = data['access_token'];
